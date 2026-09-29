@@ -1,0 +1,43 @@
+node_modules/
+.pnpm-store/
+.next/
+out/
+dist/
+*.tsbuildinfo
+.vercel
+.DS_Store
+coverage/
+.env*.local
+*.log
+
+# local desktop release builds drop their artifacts in the repo root
+WebPlugins.exe
+Parlour_*.dmg
+Parlour_*.AppImage
+Parlour_*_x64.deb
+
+# local-only working notes and agent scaffolding
+AGENTS.md
+CLAUDE.md
+BUILD-SPEC.md
+progress.md
+research/
+docs/*.md
+!docs/七款游戏结算公式与计分规则.md
+docs/music/
+apps/web/public/audio/README.md
+packages/*/README.md
+
+# local capture + scratch artifacts
+output/
+.playwright-cli/
+portrait.png
+scripts/shots*.mjs
+output/playwright/
+
+# Claude Code worktrees and scratch state — never part of the repo.
+.claude/
+
+# legacy workflows from the upstream desktop project
+.github/workflows/balance.yml
+.github/workflows/release-desktop.yml
