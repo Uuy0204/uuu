@@ -41,6 +41,7 @@ export interface Room {
   targetPlayers: number;
   options: Record<string, number | string | boolean>;
   createdAt: number;
+  updatedAt?: number;
   messages: ChatMessage[];
 }
 

@@ -89,8 +89,38 @@ export function findBotPlay(hand: Card[], previous: Combo | null, allowed?: Comb
     }
   };
   addRuns(1, 5, 'straight'); addRuns(2, 3, 'pairs'); addRuns(3, 2, 'plane');
-  return candidates.find((cards) => {
+  // Search attached combinations as well. This list is shared by hints, bots and
+  // 跑得快's compulsory-follow check; missing a wing must never authorize a pass.
+  const attachments = new Set<ComboKind>(['triple-one', 'triple-pair', 'plane-single', 'plane-pair', 'four-two', 'four-two-pairs']);
+  if (previous && attachments.has(previous.kind)) {
+    const mainSize = previous.kind.startsWith('plane') ? previous.length / (previous.kind === 'plane-single' ? 4 : 5) : 1;
+    const copies = previous.kind.startsWith('four') ? 4 : 3;
+    const wingCopies = previous.kind.endsWith('pair') || previous.kind === 'four-two-pairs' ? 2 : 1;
+    const wingCount = previous.kind.startsWith('four') ? 2 : mainSize;
+    for (const start of ranks) {
+      const coreRanks = Array.from({ length: mainSize }, (_, index) => start + index);
+      if (coreRanks.some((rank) => rank >= 15 || (byRank.get(rank)?.length ?? 0) < copies)) continue;
+      const core = coreRanks.flatMap((rank) => byRank.get(rank)!.slice(0, copies));
+      const others = [...byRank.entries()].filter(([rank, cards]) => !coreRanks.includes(rank) && cards.length >= wingCopies);
+      const collect = (from: number, wings: Card[], selected: number) => {
+        if (selected === wingCount) {
+          const candidate = [...core, ...wings];
+          if (classify(candidate)?.kind === previous.kind) candidates.push(candidate);
+          return;
+        }
+        for (let i = from; i < others.length; i += 1) {
+          collect(i + 1, [...wings, ...others[i]![1].slice(0, wingCopies)], selected + 1);
+          // Single wings may reuse a rank (e.g. two equal cards in 飞机带单).
+          if (wingCopies === 1 && others[i]![1].length >= 2 && selected + 2 <= wingCount)
+            collect(i + 1, [...wings, ...others[i]![1].slice(0, 2)], selected + 2);
+        }
+      };
+      collect(0, [], 0);
+    }
+  }
+  const legal = candidates.filter((cards) => {
     const combo = classify(cards);
     return combo && (!allowed || allowed.includes(combo.kind)) && beats(combo, previous);
-  }) ?? [];
+  });
+  return (previous ? legal.find((cards) => classify(cards)?.kind === previous.kind) : null) ?? legal[0] ?? [];
 }

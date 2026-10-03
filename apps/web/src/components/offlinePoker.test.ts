@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createOfflinePoker, pokerAction, pokerPot, pokerPots, settlePoker, type OfflinePokerState } from './offlinePoker';
+import { createOfflinePoker, nextPokerHand, pokerAction, pokerPot, pokerPots, settlePoker, type OfflinePokerState } from './offlinePoker';
 
 const players = [{ id: 'a', name: '甲' }, { id: 'b', name: '乙' }];
 
@@ -29,5 +29,25 @@ describe('线下德州虚拟筹码', () => {
     const settled = settlePoker(state, [['a'], ['b']]);
     expect(settled.seats.map((seat) => seat.stack)).toEqual([300, 400, 0]);
     expect(settled.street).toBe('settled');
+  });
+
+  it('平分含零头、继续下一局并轮换庄家时筹码总量不变', () => {
+    let game = createOfflinePoker([{ id: 'a', name: '甲' }, { id: 'b', name: '乙' }, { id: 'c', name: '丙' }], 0);
+    expect(game.seats.map((seat) => seat.stack)).toEqual([1000, 990, 980]);
+    game = { ...game, street: 'showdown', current: -1, seats: game.seats.map((seat) => ({ ...seat, stack: 989, contributed: 11, bet: 0 })) };
+    game = settlePoker(game, [['a', 'b']]);
+    expect(game.seats.reduce((sum, seat) => sum + seat.stack, 0)).toBe(3000);
+    expect(game.seats.map((seat) => seat.stack)).toEqual([1006, 1005, 989]);
+    game = nextPokerHand(game);
+    expect(game.dealer).toBe(1);
+    expect(game.seats.reduce((sum, seat) => sum + seat.stack, 0) + pokerPot(game)).toBe(3000);
+  });
+
+  it('一人全押后其余玩家仍须补齐当前下注，不能提前进入下一街', () => {
+    let game = createOfflinePoker([{ id: 'a', name: '甲' }, { id: 'b', name: '乙' }, { id: 'c', name: '丙' }], 0);
+    game = pokerAction(game, 'allin');
+    expect(game.street).toBe('preflop');
+    expect(game.current).toBe(1);
+    expect(game.seats.reduce((sum, seat) => sum + seat.stack, 0) + pokerPot(game)).toBe(3000);
   });
 });
