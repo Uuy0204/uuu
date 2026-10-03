@@ -227,7 +227,7 @@ export function CardRoom() {
       const context = next.game ? { room: next.code, round: next.round, phase: next.game.phase, turn: next.game.turn, liarRound: next.game.roundNumber } : null;
       const before = selectionContext.current;
       selectionContext.current = context;
-      if (!context || !before || context.room !== before.room || context.round !== before.round || context.phase !== before.phase || context.turn !== before.turn || context.liarRound !== before.liarRound) {
+      if (!context || (before && (context.room !== before.room || context.round !== before.round || context.phase !== before.phase || context.turn !== before.turn || context.liarRound !== before.liarRound))) {
         setSelected([]);
       } else {
         const handIds = new Set(next.game?.hand.map((card) => card.id) ?? []);
