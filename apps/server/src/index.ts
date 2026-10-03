@@ -25,7 +25,7 @@ const rooms = new Map<string, Room>();
 const roomTimers = new Map<string, NodeJS.Timeout>();
 const disconnectTimers = new Map<string, NodeJS.Timeout>();
 const TURN_MS = 30_000;
-const LIARS_BOT_PAUSE_MS = 3_000;
+const LIARS_BOT_PAUSE_MS = 6_000;
 
 function liarsBotPause(room: Room): boolean {
   const game = room.game;
@@ -92,8 +92,8 @@ function armTurnTimer(room: Room) {
     if (action) {
       gameModule.action(current.game, current.players, player.id, action);
       runBots(current);
-      emitRoom(current);
       armTurnTimer(current);
+      emitRoom(current);
     }
   }, duration));
 }
