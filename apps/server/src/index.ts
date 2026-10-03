@@ -7,13 +7,15 @@ import { fileURLToPath } from 'node:url';
 import { Server, type Socket } from 'socket.io';
 import { games, gameNames } from './games/index.js';
 import type { ClientRoom, GameAction, GameId, Player, Room } from './types.js';
+import { durableRooms, loadRooms, saveRooms } from './room-store.js';
+import { shouldEvictRoom } from './room-lifecycle.js';
 
 const PORT = Number(process.env.PORT ?? 3001);
 const origins = process.env.CLIENT_ORIGIN?.split(',').map((origin) => origin.trim()).filter(Boolean);
 const corsOrigin = origins?.length ? origins : true;
 const app = express();
 app.use(cors({ origin: corsOrigin }));
-app.get('/health', (_req, res) => res.json({ ok: true, name: '小赌怡情', rooms: rooms.size }));
+app.get('/health', (_req, res) => res.json({ ok: true, name: '小赌怡情', rooms: rooms.size, durableRooms }));
 app.get('/games', (_req, res) => res.json(gameNames));
 const publicDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../web/out');
 app.use(express.static(publicDir));
@@ -26,6 +28,13 @@ const roomTimers = new Map<string, NodeJS.Timeout>();
 const disconnectTimers = new Map<string, NodeJS.Timeout>();
 const TURN_MS = 30_000;
 const LIARS_BOT_PAUSE_MS = 6_000;
+let pendingSnapshot: Promise<void> = Promise.resolve();
+function snapshot() {
+  if (!durableRooms) return;
+  const data = [...rooms.values()];
+  pendingSnapshot = pendingSnapshot.catch(() => {}).then(() => saveRooms(data));
+  void pendingSnapshot.catch((error) => console.error('房间持久化失败', error));
+}
 
 function liarsBotPause(room: Room): boolean {
   const game = room.game;
@@ -48,9 +57,11 @@ function cleanName(value: unknown): string {
 function playerFrom(payload: Record<string, unknown>): Player {
   const id = String(payload.playerId ?? '').slice(0, 80);
   if (!id) throw new Error('玩家身份无效');
+  const reconnectSecret = String(payload.reconnectSecret ?? '').slice(0, 128);
+  if (reconnectSecret.length < 24) throw new Error('身份凭据已失效，请刷新页面');
   const requestedAvatar = Number(payload.avatar ?? 0);
   const avatar = Number.isInteger(requestedAvatar) ? ((requestedAvatar % 8) + 8) % 8 : 0;
-  return { id, name: cleanName(payload.name), avatar, connected: true };
+  return { id, name: cleanName(payload.name), avatar, connected: true, reconnectSecret };
 }
 
 function availableSeat(room: Room): number {
@@ -60,10 +71,12 @@ function availableSeat(room: Room): number {
 }
 
 function clientRoom(room: Room, playerId: string): ClientRoom {
-  return { ...room, game: room.game ? games[room.gameId].view(room.game, playerId) : null };
+  return { ...room, players: room.players.map(({ reconnectSecret: _secret, ...player }) => player), game: room.game ? games[room.gameId].view(room.game, playerId) : null };
 }
 
 function emitRoom(room: Room) {
+  room.updatedAt = Date.now();
+  snapshot();
   for (const socket of io.sockets.sockets.values()) {
     if (socket.data.roomCode === room.code) socket.emit('room:update', clientRoom(room, socket.data.playerId));
   }
@@ -113,10 +126,16 @@ function leaveCurrentRoom(socket: Socket, handOff = false) {
   const room = rooms.get(socket.data.roomCode);
   const player = room?.players.find((candidate) => candidate.id === socket.data.playerId);
   if (!room || !player) return;
+  // An old socket can disconnect after the same player has already rejoined.
+  const anotherSocket = [...io.sockets.sockets.values()].some((other) => other.id !== socket.id && other.connected && other.data.roomCode === room.code && other.data.playerId === player.id);
+  if (anotherSocket) { void socket.leave(room.code); delete socket.data.roomCode; delete socket.data.playerId; return; }
   if (room.status === 'lobby') {
-    room.players = room.players.filter((candidate) => candidate.id !== player.id);
-    if (room.hostId === player.id) room.hostId = room.players.find((candidate) => !candidate.bot)?.id ?? '';
-    if (!room.players.length || !room.hostId) rooms.delete(room.code); else emitRoom(room);
+    if (!handOff) { player.connected = false; emitRoom(room); }
+    else {
+      room.players = room.players.filter((candidate) => candidate.id !== player.id);
+      if (room.hostId === player.id) room.hostId = room.players.find((candidate) => !candidate.bot)?.id ?? '';
+      if (!room.players.length || !room.hostId) { rooms.delete(room.code); snapshot(); } else emitRoom(room);
+    }
   } else {
     player.connected = false;
     if (handOff) {
@@ -200,14 +219,16 @@ io.on('connection', (socket) => {
       const room = rooms.get(code);
       if (!room) throw new Error('没有找到这个房间');
       const incoming = playerFrom(payload);
-      if (socket.data.roomCode && socket.data.roomCode !== code) leaveCurrentRoom(socket, true);
+      if (socket.data.roomCode && (socket.data.roomCode !== code || socket.data.playerId !== incoming.id)) leaveCurrentRoom(socket, true);
       const existing = room.players.find((p) => p.id === incoming.id);
       if (existing) {
+        if (existing.reconnectSecret !== incoming.reconnectSecret) throw new Error('该座位属于另一位玩家');
         const disconnectKey = `${room.code}:${incoming.id}`;
         const timer = disconnectTimers.get(disconnectKey);
         if (timer) clearTimeout(timer);
         disconnectTimers.delete(disconnectKey);
         Object.assign(existing, incoming, { connected: true, bot: false, name: incoming.name.replace(/（托管）$/, '') });
+        if (!room.players.some((p) => p.id === room.hostId && p.connected && !p.bot)) room.hostId = incoming.id;
       }
       else {
         if (room.status !== 'lobby') throw new Error('牌局已经开始');
@@ -243,7 +264,14 @@ io.on('connection', (socket) => {
       const gameModule = games[room.gameId];
       if (room.players.length < room.targetPlayers) throw new Error(`还差 ${room.targetPlayers - room.players.length} 位玩家`);
       room.players.sort((a, b) => (a.seat ?? 0) - (b.seat ?? 0));
-      if (room.gameId === 'poker') room.options.dealer = room.round % room.players.length;
+      if (room.gameId === 'poker') {
+        if (room.game && 'stacks' in room.game) {
+          const stacks = room.game.stacks as Record<string, number>;
+          if (Object.values(stacks).filter((stack) => stack > 0).length < 2) throw new Error('只剩一人有筹码，本轮已结束');
+          room.options.startingStacks = JSON.stringify(stacks);
+        }
+        room.options.dealer = room.round % room.players.length;
+      }
       room.game = gameModule.create(room.players, room.options);
       room.round += 1;
       room.status = 'playing';
@@ -289,7 +317,14 @@ io.on('connection', (socket) => {
       const room = rooms.get(roomCode);
       const player = room?.players.find((candidate) => candidate.id === playerId);
       disconnectTimers.delete(key);
-      if (!room || !player || player.connected || room.status !== 'playing') return;
+      if (!room || !player || player.connected) return;
+      if (room.status === 'lobby') {
+        room.players = room.players.filter((candidate) => candidate.id !== playerId);
+        if (room.hostId === playerId) room.hostId = room.players.find((candidate) => candidate.connected && !candidate.bot)?.id ?? '';
+        if (!room.players.length || !room.hostId) { rooms.delete(roomCode); snapshot(); } else emitRoom(room);
+        return;
+      }
+      if (room.status !== 'playing') return;
       player.bot = true;
       player.name = `${player.name.replace(/（托管）$/, '')}（托管）`;
       if (room.hostId === player.id) room.hostId = room.players.find((candidate) => candidate.connected && !candidate.bot)?.id ?? player.id;
@@ -301,8 +336,21 @@ io.on('connection', (socket) => {
 });
 
 setInterval(() => {
-  const stale = Date.now() - 12 * 60 * 60 * 1000;
-  for (const [code, room] of rooms) if (room.createdAt < stale) { clearRoomTimer(code); rooms.delete(code); }
+  for (const [code, room] of rooms) {
+    // Never evict an active table solely because it was created 12 hours ago.
+    if (!shouldEvictRoom(room)) continue;
+    clearRoomTimer(code); rooms.delete(code); snapshot();
+  }
 }, 60 * 60 * 1000).unref();
 
+// Do not accept new rooms before the durable snapshot has been loaded. If
+// configured storage is down, fail closed instead of overwriting saved games.
+for (const room of await loadRooms()) {
+  if (!room?.code || !room.players || (room.status === 'lobby' && !room.players.length)) continue;
+  room.players.forEach((player) => {
+    if (!player.bot && room.status === 'playing') { player.bot = true; player.name = `${player.name.replace(/（托管）$/, '')}（托管）`; }
+    if (!player.id.startsWith('bot-')) player.connected = false;
+  });
+  rooms.set(room.code, room);
+}
 httpServer.listen(PORT, () => console.warn(`小赌怡情服务已启动：http://localhost:${PORT}`));

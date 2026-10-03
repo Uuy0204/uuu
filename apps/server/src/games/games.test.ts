@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Card, Player } from '../types.js';
 import { games } from './index.js';
-import { beats, classify } from './doudizhu-common.js';
+import { beats, classify, findBotPlay } from './doudizhu-common.js';
 
 const players = (count: number): Player[] => Array.from({ length: count }, (_, i) => ({
   id: `p${i}`, name: `玩家${i + 1}`, avatar: i, connected: true,
@@ -139,6 +139,31 @@ describe('游戏初始化', () => {
     expect(() => games.paodekuai.action(state, participants, follower.id, { type: 'pass' })).toThrow('有牌能压');
   });
 
+  it('三带一可压牌时提示、机器人和有牌必出使用同一搜索', () => {
+    const participants = players(3);
+    const state = games.paodekuai.create(participants) as ReturnType<typeof games.paodekuai.create> & {
+      current: { playerId: string; cards: Card[]; combo: NonNullable<ReturnType<typeof classify>> } | null;
+      firstMove: boolean;
+    };
+    const previous = cards([4, 4, 4, 8]);
+    state.current = { playerId: 'p0', cards: previous, combo: classify(previous)! };
+    state.firstMove = false; state.turn = 1;
+    state.hands.p1 = cards([5, 5, 5, 9, 3]);
+    const suggestion = games.paodekuai.view(state, 'p1').suggestion as string[];
+    expect(suggestion).toHaveLength(4);
+    expect(classify(state.hands.p1.filter((c) => suggestion.includes(c.id)))?.kind).toBe('triple-one');
+    expect(games.paodekuai.botAction(state, participants, 'p1')).toEqual({ type: 'play', cardIds: suggestion });
+    expect(() => games.paodekuai.action(state, participants, 'p1', { type: 'pass' })).toThrow('有牌能压');
+  });
+
+  it('飞机带单即使翅膀同点数也能找到，纯单牌不能误拦要不起', () => {
+    const previous = classify(cards([3, 3, 3, 4, 4, 4, 8, 9]))!;
+    const hand = cards([5, 5, 5, 6, 6, 6, 10, 10, 14]);
+    const found = findBotPlay(hand, previous, ['single', 'plane-single']);
+    expect(classify(found)).toEqual({ kind: 'plane-single', value: 6, length: 8 });
+    expect(findBotPlay(cards([3, 7, 9]), previous, ['plane-single'])).toEqual([]);
+  });
+
   it('争上游发完整 54 张牌，并允许有牌时策略性过牌', () => {
     const participants = players(4);
     const state = games.zhengshangyou.create(participants) as ReturnType<typeof games.zhengshangyou.create> & {
@@ -180,6 +205,21 @@ describe('游戏初始化', () => {
     games.poker.action(state, participants, 'p0', { type: 'fold' });
     expect(state.phase).toBe('finished');
     expect(Object.values(state.scores!).reduce((sum, score) => sum + score, 0)).toBe(0);
+  });
+
+  it('线上德州第二局继承筹码，本局积分按本局开局余额计算', () => {
+    const participants = players(2);
+    const first = games.poker.create(participants);
+    games.poker.action(first, participants, participants[first.turn]!.id, { type: 'fold' });
+    const finalStacks = (first as typeof first & { stacks: Record<string, number> }).stacks;
+    const second = games.poker.create(participants, { dealer: 1, startingStacks: JSON.stringify(finalStacks) }) as typeof first & {
+      stacks: Record<string, number>; pot: number; dealer: number;
+    };
+    expect(second.dealer).toBe(1);
+    expect(Object.values(second.stacks).reduce((sum, n) => sum + n, 0) + second.pot).toBe(2000);
+    games.poker.action(second, participants, participants[second.turn]!.id, { type: 'fold' });
+    expect(Object.values(second.scores!).reduce((sum, n) => sum + n, 0)).toBe(0);
+    expect(second.scores![participants[second.turn]!.id]).not.toBe(undefined);
   });
 
   it('德州扑克按投入拆分主池和边池', () => {

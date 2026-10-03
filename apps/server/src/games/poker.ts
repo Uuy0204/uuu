@@ -15,6 +15,7 @@ interface PokerState extends BaseGame {
   dealer: number;
   pots: number[];
   showdownHands?: Record<string, Card[]>;
+  startingStacks: Record<string, number>;
 }
 
 function scoreFive(cards: Card[]): number[] {
@@ -89,7 +90,7 @@ function settle(state: PokerState, players: Player[], contenders: string[]) {
     }
     previous = level;
   }
-  state.scores = Object.fromEntries(players.map((p) => [p.id, state.stacks[p.id]! - 1000]));
+  state.scores = Object.fromEntries(players.map((p) => [p.id, state.stacks[p.id]! - (state.startingStacks?.[p.id] ?? 1000)]));
   state.winnerIds = [...allWinners];
   state.showdownHands = Object.fromEntries(contenders.map((id) => [id, state.hands[id]!]));
   state.phase = 'finished';
@@ -128,10 +129,22 @@ export const poker: GameModule = {
   create(players, options) {
     const pile = shuffle(deck(1, false).map((card) => card.rank === '2' ? { ...card, value: 2 } : card));
     const hands = Object.fromEntries(players.map((p) => [p.id, pile.splice(0, 2)]));
-    const dealer = Number(options?.dealer ?? 0) % players.length;
-    const smallBlindIndex = players.length === 2 ? dealer : nextActive(dealer, players.length);
-    const bigBlindIndex = nextActive(smallBlindIndex, players.length);
-    const stacks = Object.fromEntries(players.map((p) => [p.id, 1000]));
+    const previous = typeof options?.startingStacks === 'string' ? JSON.parse(options.startingStacks) as Record<string, number> : {};
+    const stacks: Record<string, number> = Object.fromEntries(players.map((p) => {
+      const value = previous[p.id];
+      return [p.id, Number.isSafeInteger(value) && value !== undefined && value >= 0 ? value : 1000];
+    }));
+    const startingStacks = { ...stacks };
+    const eligible = (index: number) => stacks[players[index]!.id]! > 0;
+    let dealer = Number(options?.dealer ?? 0) % players.length;
+    while (!eligible(dealer)) dealer = (dealer + 1) % players.length;
+    const nextEligible = (from: number) => {
+      let index = from;
+      do { index = (index + 1) % players.length; } while (!eligible(index));
+      return index;
+    };
+    const smallBlindIndex = Object.values(stacks).filter((n) => n > 0).length === 2 ? dealer : nextEligible(dealer);
+    const bigBlindIndex = nextEligible(smallBlindIndex);
     const bets = Object.fromEntries(players.map((p) => [p.id, 0]));
     const contributions = Object.fromEntries(players.map((p) => [p.id, 0]));
     const postBlind = (index: number, amount: number) => {
@@ -142,10 +155,10 @@ export const poker: GameModule = {
     };
     const smallBlind = postBlind(smallBlindIndex, 10);
     const bigBlind = postBlind(bigBlindIndex, 20);
-    const firstTurn = nextActive(bigBlindIndex, players.length);
+    const firstTurn = nextEligible(bigBlindIndex);
     return {
       gameId: 'poker', phase: 'preflop', turn: firstTurn, hands, drawPile: pile, community: [], pot: smallBlind + bigBlind,
-      stacks, bets, contributions, folded: [], acted: [], currentBet: bigBlind, dealer, pots: [],
+      stacks, startingStacks, bets, contributions, folded: players.filter((p) => !stacks[p.id]).map((p) => p.id), acted: [], currentBet: bigBlind, dealer, pots: [],
       message: `盲注 10/20，${players[firstTurn]!.name} 行动`,
     } satisfies PokerState;
   },

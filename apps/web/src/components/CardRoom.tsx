@@ -35,7 +35,7 @@ const RULES: Record<GameId, RuleContent> = {
     { title: '胜负与计分', items: ['混战模式按出完先后继续排定四个名次，使用 +3、0、-1、-2 权重结算。组队模式中任一队员先出完，该队立即获胜并共同结算。', '炸弹、王炸或天王炸弹使倍率翻倍，倍率最高 256。'] },
   ] },
   poker: { intro: '每人 2 张私有底牌，结合 5 张公共牌组成最佳五张牌型，通过四轮行动争夺底池。', sections: [
-    { title: '开局与行动', items: ['每位玩家以 1000 娱乐筹码开始并获得 2 张仅自己可见的底牌。庄家每局顺时针轮换；小盲 10、大盲 20，二人局中庄家同时支付小盲。', '翻牌前、翻牌、转牌、河牌共四轮行动，可弃牌、过牌、跟注、加注或全押；仍可行动的玩家都完成行动且投入相同后进入下一街。'] },
+    { title: '开局与行动', items: ['每位玩家初始 1000 娱乐筹码，下一局沿用上一局余额；筹码耗尽的玩家离桌。庄家每局顺时针轮换；小盲 10、大盲 20，二人局中庄家同时支付小盲。', '翻牌前、翻牌、转牌、河牌共四轮行动，可弃牌、过牌、跟注、加注或全押；仍可行动的玩家都完成行动且投入相同后进入下一街。'] },
     { title: '摊牌与牌型', items: ['河牌后仍在局内的玩家摊牌，从 2 张底牌与 5 张公共牌中任选 5 张组成最大牌型；若只剩一人未弃牌，该玩家直接赢得底池。', '牌型从大到小为皇家同花顺、同花顺、四条、葫芦、同花、顺子、三条、两对、一对、高牌；完全相同则平分底池。'] },
     { title: '筹码与底池', items: ['加注最少增加 10；可随时选择全押。不同额度全押会按每位玩家累计投入自动拆分主池和边池，玩家只参与自己有资格争夺的底池。', '若所有其他玩家弃牌，最后一人直接获胜；牌力完全相同则平分对应底池，不能整除的余数给排序靠前的赢家。'] },
   ] },
@@ -73,7 +73,7 @@ const RULE_EXAMPLES: Record<GameId, { title: string; text: string }> = {
 const SCORE_NOTES: Record<GameId, string> = {
   doudizhu3: '积分按叫分、加倍、炸弹与春天形成的倍率计算；基础分最多 5 分，地主按两倍结算。',
   doudizhu4: '混战按四个名次与倍率结算；组队时胜队每人加分，负队每人扣同等分数。',
-  poker: '本局积分等于最终娱乐筹码减去开局的 1000 筹码；边池只由有资格的玩家争夺。',
+  poker: '每人初始 1000 娱乐筹码，多局沿用上一局余额；本局积分为本局结束余额减去本局开始余额。',
   paodekuai: '按照出完牌的名次结算，炸弹倍率作用于名次积分。',
   zhengshangyou: '按照出完牌的名次结算，炸弹倍率作用于名次积分。',
   fishing: '结算分为剩余牌堆的牌面分值；达到回合上限时，也按此分值比较。',
@@ -98,13 +98,18 @@ interface OfflineSession {
   bulletChambers: Record<string, number[]>;
   message: string;
   poker?: OfflinePokerState;
+  createdAt?: number;
+  recordedRound?: number;
+  startingStacks?: Record<string, number>;
 }
 
 function getIdentity() {
-  if (typeof window === 'undefined') return { playerId: '', name: '', avatar: 0 };
+  if (typeof window === 'undefined') return { playerId: '', name: '', avatar: 0, reconnectSecret: '' };
   let playerId = localStorage.getItem('xy-player-id');
   if (!playerId) { playerId = createPlayerId(); localStorage.setItem('xy-player-id', playerId); }
-  return { playerId, name: localStorage.getItem('xy-name') ?? '', avatar: Number(localStorage.getItem('xy-avatar') ?? 0) };
+  let reconnectSecret = localStorage.getItem('xy-reconnect-secret');
+  if (!reconnectSecret) { reconnectSecret = `${crypto.randomUUID()}${crypto.randomUUID()}`; localStorage.setItem('xy-reconnect-secret', reconnectSecret); }
+  return { playerId, reconnectSecret, name: localStorage.getItem('xy-name') ?? '', avatar: Number(localStorage.getItem('xy-avatar') ?? 0) };
 }
 
 function createPlayerId() {
@@ -190,7 +195,7 @@ function TurnTimer({ active, deadline, duration = 30_000 }: { active: boolean; d
 }
 
 export function CardRoom() {
-  const [identity, setIdentity] = useState({ playerId: '', name: '', avatar: 0 });
+  const [identity, setIdentity] = useState({ playerId: '', name: '', avatar: 0, reconnectSecret: '' });
   const [gameId, setGameId] = useState<GameId>('doudizhu3');
   const [joinCode, setJoinCode] = useState('');
   const [room, setRoom] = useState<ClientRoom | null>(null);
@@ -203,6 +208,7 @@ export function CardRoom() {
   const [setupOpen, setSetupOpen] = useState(false);
   const [recentRoom, setRecentRoom] = useState('');
   const [offline, setOffline] = useState<OfflineSession | null>(null);
+  const [savedOffline, setSavedOffline] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [vibrationEnabled, setVibrationEnabled] = useState(true);
   const previousGame = useRef<{ room: string; round: number; phase: string; turn: number; hand: string; play: string; reveal: string; pot: number; community: number } | null>(null);
@@ -252,7 +258,10 @@ export function CardRoom() {
     const rejoin = () => {
       const code = sessionStorage.getItem('xy-room');
       const name = localStorage.getItem('xy-name') ?? current.name;
-      if (code && name) socket.emit('room:join', { ...current, name, avatar: Number(localStorage.getItem('xy-avatar') ?? current.avatar), code }, (result: { ok: boolean; room?: ClientRoom }) => result.ok && result.room && update(result.room));
+      if (code && name) socket.emit('room:join', { ...current, name, avatar: Number(localStorage.getItem('xy-avatar') ?? current.avatar), code }, (result: { ok: boolean; room?: ClientRoom }) => {
+        if (result.ok && result.room) update(result.room);
+        else { sessionStorage.removeItem('xy-room'); localStorage.removeItem('xy-recent-room'); setRecentRoom(''); setRoom(null); setNotice('旧房间已失效，请重新创建房间'); }
+      });
     };
     const onConnect = () => { setConnected(true); setNotice(''); rejoin(); };
     const onDisconnect = () => setConnected(false);
@@ -281,7 +290,7 @@ export function CardRoom() {
   const prepareIdentity = () => {
     const playerId = identity.playerId || createPlayerId();
     const name = identity.name.trim() || `牌友${playerId.slice(0, 4).toUpperCase()}`;
-    const next = { ...identity, playerId, name };
+    const next = { ...getIdentity(), ...identity, playerId, reconnectSecret: identity.reconnectSecret || getIdentity().reconnectSecret, name };
     localStorage.setItem('xy-player-id', playerId); localStorage.setItem('xy-name', name); localStorage.setItem('xy-avatar', String(identity.avatar));
     setIdentity(next); return next;
   };
@@ -297,15 +306,16 @@ export function CardRoom() {
         seat, score: 0,
       }));
       const nextOffline = {
-        gameId, players, current: setup.hostSeat, dealer: setup.hostSeat, round: 1, matchRounds: setup.matchRounds, totalScores: {},
+        gameId, players, current: setup.hostSeat, dealer: setup.hostSeat, round: 1, matchRounds: setup.matchRounds, totalScores: {}, createdAt: Date.now(),
         targetRank: randomTargetRank(),
         shots: Object.fromEntries(players.map((player) => [player.id, 0])),
         bulletCount: setup.bulletCount,
         bulletChambers: Object.fromEntries(players.map((player) => [player.id, randomBulletChambers(setup.bulletCount)])),
         message: gameId === 'liarsbar' ? '发好暗牌，开始第一轮声明' : '线下牌局已就绪',
-        ...(gameId === 'poker' ? { poker: createOfflinePoker(players, setup.hostSeat) } : {}),
+        ...(gameId === 'poker' ? { poker: createOfflinePoker(players, setup.hostSeat), startingStacks: Object.fromEntries(players.map((player) => [player.id, 1000])) } : {}),
       };
       localStorage.setItem('xy-offline-session', JSON.stringify(nextOffline));
+      setSavedOffline(false);
       setOffline(nextOffline);
       return;
     }
@@ -390,14 +400,16 @@ export function CardRoom() {
   }, [room, identity.playerId, soundEnabled, vibrationEnabled]);
 
   const totalScore = useMemo(() => history.reduce((sum, item) => sum + item.score, 0), [history]);
-  const recordOffline = (playedGame: GameId, score: number) => setHistory((items) => {
-    const item: HistoryItem = { key: `offline-${Date.now()}`, at: Date.now(), gameId: playedGame, score, result: score > 0 ? '胜' : score < 0 ? '负' : '平' };
+  const recordOffline = (playedGame: GameId, score: number, recordKey?: string) => setHistory((items) => {
+    const key = recordKey ?? `offline-${Date.now()}`;
+    if (items.some((item) => item.key === key)) return items;
+    const item: HistoryItem = { key, at: Date.now(), gameId: playedGame, score, result: score > 0 ? '胜' : score < 0 ? '负' : '平' };
     const updated = [item, ...items].slice(0, 50);
     localStorage.setItem('xy-history', JSON.stringify(updated));
     return updated;
   });
 
-  if (offline?.gameId === 'poker') return <OfflinePokerTable initial={{ ...offline, gameId: 'poker' }} localPlayerId={identity.playerId} onRecord={(score) => recordOffline('poker', score)} onExit={() => { localStorage.removeItem('xy-offline-session'); setOffline(null); }} />;
+  if (offline?.gameId === 'poker') return <OfflinePokerTable initial={{ ...offline, gameId: 'poker' }} localPlayerId={identity.playerId} onRecord={(score, key) => recordOffline('poker', score, key)} onExit={() => { setOffline(null); setSavedOffline(true); }} />;
   if (offline) return <OfflineTable session={offline} localPlayerId={identity.playerId} soundEnabled={soundEnabled} onSound={(value) => { setSoundEnabled(value); localStorage.setItem('xy-sound', value ? 'on' : 'off'); }} onRecord={recordOffline} onExit={() => { localStorage.removeItem('xy-offline-session'); setOffline(null); }} />;
 
   if (!room) return <main className="home-shell">
@@ -410,6 +422,7 @@ export function CardRoom() {
         <span className="field-label avatar-label">头像</span>
         <div className="avatars" aria-label="选择头像">{AVATARS.map((text, index) => <button key={text} aria-label={`头像 ${text}`} aria-pressed={identity.avatar === index} className={identity.avatar === index ? 'active' : ''} onClick={() => setIdentity({ ...identity, avatar: index })}>{text}</button>)}</div>
         {recentRoom && <button className="resume-button" onClick={() => void resumeRoom()}><RotateCcw size={17} /><span><small>未结束的牌局</small><strong>继续房间 {recentRoom}</strong></span><ArrowRight size={16} /></button>}
+        {savedOffline && <button className="resume-button" onClick={() => { setOffline(readOfflineSession()); setSavedOffline(false); }}><RotateCcw size={17} /><span><small>已保存到本机</small><strong>继续线下德州</strong></span><ArrowRight size={16} /></button>}
         <div className="rail-divider"><span>加入牌局</span></div>
         <div className="join-box"><input className="text-input room-input" inputMode="numeric" maxLength={6} placeholder="000000" aria-label="六位房间号" value={joinCode} onChange={(e) => setJoinCode(e.target.value.replace(/\D/g, ''))} onKeyDown={(e) => e.key === 'Enter' && void joinRoom()} /><button className="secondary-button" disabled={busy} onClick={() => void joinRoom()}><DoorOpen size={18} />加入</button></div>
         {notice && <p className="notice">{notice}</p>}

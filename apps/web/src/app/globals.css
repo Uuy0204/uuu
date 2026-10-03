@@ -1,6 +1,7 @@
 * { box-sizing: border-box; }
 :root { --ink: #17201d; --muted: #68736f; --line: #dce1df; --paper: #f7f8f6; --green: #145c47; --green-2: #0d4636; --red: #c33c35; --gold: #d79c34; }
 html, body { margin: 0; min-height: 100%; background: var(--paper); color: var(--ink); font-family: Arial, "PingFang SC", "Microsoft YaHei", sans-serif; letter-spacing: 0; }
+html, body { max-width: 100%; overflow-x: clip; }
 button, input { font: inherit; letter-spacing: 0; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .48; }
@@ -870,6 +871,22 @@ button:focus-visible, input:focus-visible { outline: 3px solid #e2b55d; outline-
 .offline-poker-results { display: flex; justify-content: center; flex-wrap: wrap; gap: 12px; margin: 15px auto; }
 .offline-poker-results span { padding: 8px; border: 1px solid #d8ae6757; border-radius: 5px; }
 .offline-poker-results b { color: #f5d898; }
+
+/* Keep the card table and its controls inside narrow mobile visual viewports. */
+.room-shell, .offline-shell { max-width: 100%; overflow-x: clip; }
+.room-shell .table-area, .room-shell .player-zone, .offline-poker-controls { min-width: 0; }
+.hand-liarsbar { width: 100%; max-width: 100%; justify-content: flex-start; padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); touch-action: pan-x; }
+.hand-liarsbar .playing-card { flex: 0 0 auto; touch-action: manipulation; }
+.modal-backdrop { max-height: 100dvh; overflow-y: auto; overscroll-behavior: contain; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+.modal { max-height: calc(100dvh - 24px - env(safe-area-inset-bottom)); overflow-y: auto; }
+.offline-undo { width: auto; min-width: 80px; font-size: 12px; white-space: nowrap; }
+@media (max-width: 430px) {
+  .poker-actions .raise-control input, .offline-poker-buttons .raise-control input { font-size: 16px; }
+  .offline-poker { width: calc(100% - 20px); padding-bottom: max(32px, env(safe-area-inset-bottom)); }
+  .offline-poker-controls { padding: 14px 10px; }
+  .offline-poker-buttons > button { min-height: 44px; }
+  .offline-poker-buttons .raise-control { width: min(100%, 180px); grid-template-columns: 36px minmax(65px, 1fr) 36px; }
+}
 .hand.hand-liarsbar .playing-card + .playing-card { margin-left: -20px; }
 @media (max-width: 680px) {
   .revolver-stage { width: min(280px, 78vw); }

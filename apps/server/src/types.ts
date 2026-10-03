@@ -7,6 +7,7 @@ export interface Player {
   connected: boolean;
   bot?: boolean;
   seat?: number;
+  reconnectSecret?: string;
 }
 
 export interface Card {
@@ -41,6 +42,7 @@ export interface Room {
   targetPlayers: number;
   options: Record<string, number | string | boolean>;
   createdAt: number;
+  updatedAt?: number;
   messages: ChatMessage[];
 }
 
