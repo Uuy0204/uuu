@@ -109,6 +109,7 @@ export const liarsbar: GameModule = {
   },
   action(base, players, playerId, action: GameAction) {
     const state = base as LiarsBarState;
+    if (!players.some((player) => player.id === playerId)) throw new Error('你不在当前牌局中');
 
     if (state.phase === 'challenge') {
       if (action.type === 'challenge') {
@@ -131,6 +132,7 @@ export const liarsbar: GameModule = {
     const remaining = removeCards(hand, action.cardIds);
     if (!remaining || cards.length !== action.cardIds.length) throw new Error('请选择自己手中的牌');
     state.hands[playerId] = remaining;
+    state.lastReveal = null;
     state.lastClaim = { playerId, cards, count: cards.length };
     state.tableCount += cards.length;
     state.phase = 'challenge';
