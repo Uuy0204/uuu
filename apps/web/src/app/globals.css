@@ -168,7 +168,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid #e2b55d; outline-
 .lobby-actions { display: flex; justify-content: center; gap: 10px; }
 .waiting { display: flex; justify-content: center; align-items: center; gap: 8px; color: #c1d3cc; font-size: 13px; }
 
-.table-area { min-height: calc(100vh - 66px); position: relative; display: grid; grid-template-rows: auto 1fr auto; background: #174f40; }
+.table-area { min-height: calc(100vh - 66px); min-width: 0; position: relative; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr auto; background: #174f40; }
 .table-area::before { content: ''; width: min(780px, 76vw); height: min(380px, 46vh); position: absolute; left: 50%; top: 47%; transform: translate(-50%, -50%); border: 1px solid color-mix(in srgb, var(--room-accent, #d8b660) 32%, transparent); border-radius: 50%; box-shadow: inset 0 0 0 12px #ffffff06; pointer-events: none; }
 .opponents { min-height: 78px; padding: 14px 18px; display: flex; justify-content: center; gap: 10px; overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: thin; }
 .player-chip { min-width: 120px; max-width: 190px; padding: 7px 10px; display: flex; align-items: center; gap: 8px; border: 1px solid #ffffff20; border-radius: 5px; background: color-mix(in srgb, var(--room-deep, #092f27) 74%, transparent); opacity: .72; }
@@ -196,7 +196,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid #e2b55d; outline-
 @keyframes play-in { from { opacity: 0; transform: translateY(20px) scale(.9); } }
 @keyframes table-shake { 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
 @keyframes settle-in { from { opacity: 0; transform: translateY(18px) scale(.97); } }
-.felt-center { min-height: 180px; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 18px; }
+.felt-center { min-height: 180px; min-width: 0; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 18px; }
 .round-meta { min-height: 28px; margin-bottom: 15px; display: flex; align-items: center; gap: 10px; color: #d5e2dd; font-size: 13px; }
 .round-meta b { padding: 4px 8px; border-radius: 3px; background: #e1b557; color: #342a15; font-size: 11px; }
 .center-status { min-height: 31px; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
@@ -482,7 +482,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid #e2b55d; outline-
 .offline-target b { font-family: Georgia, serif; font-size: 34px; }
 .challenge-button { min-height: 44px; padding: 0 20px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid #e6a352; border-radius: 5px; background: #8b2f2b; color: #fff; font-weight: 700; box-shadow: 0 2px 0 #511816; }
 .trust-button { min-width: 98px; }
-.liars-center { width: min(650px, 92vw); min-height: 220px; position: relative; display: grid; grid-template-columns: 120px minmax(130px, 1fr) 200px; align-items: center; gap: 18px; padding: 20px 34px; border: 1px solid #e0a24d42; border-radius: 44%; background: #2b17127d; box-shadow: inset 0 0 0 8px #ffffff05, 0 20px 55px #14080655; }
+.liars-center { width: min(650px, 100%); min-height: 220px; position: relative; display: grid; grid-template-columns: 120px minmax(130px, 1fr) 200px; align-items: center; gap: 18px; padding: 20px 34px; border: 1px solid #e0a24d42; border-radius: 44%; background: #2b17127d; box-shadow: inset 0 0 0 8px #ffffff05, 0 20px 55px #14080655; }
 .bar-lamp { width: 32px; height: 42px; position: absolute; top: -12px; display: grid; place-items: center; border: 1px solid #dda24d70; border-radius: 4px 4px 12px 12px; background: #e0a24d22; color: #f0bf72; box-shadow: 0 0 20px #e0a24d42; }
 .bar-lamp.left { left: 55px; }
 .bar-lamp.right { right: 55px; }
