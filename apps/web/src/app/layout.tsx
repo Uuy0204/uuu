@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
+import './premium.css';
 
 export const metadata: Metadata = {
   title: '小赌怡情',

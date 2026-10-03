@@ -15,7 +15,7 @@ test('窄屏主页与德州线下操作、撤销和刷新恢复', async ({ page 
   await page.reload();
   await expect(page.getByText('翻牌前', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '返回首页并保存牌局' }).click();
-  await page.getByRole('button', { name: /继续线下德州/ }).click();
+  await page.locator('.mobile-resume').filter({ hasText: '继续已保存的线下德州' }).click();
   await expect(page.getByText('当前阶段')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
@@ -36,11 +36,18 @@ test('窄屏骗子酒馆三张选择和声明后仍可操作', async ({ page }) 
     await expect(page.locator('.hand-liarsbar .playing-card.selected')).toHaveCount(index + 1);
   }
   await expect(page.locator('.hand-liarsbar .playing-card.selected')).toHaveCount(3);
+  await expect(page.locator('.turn-status')).toContainText('已选 3 / 3 张');
+  expect(await page.locator('.player-zone').evaluate((zone) => {
+    const cards = zone.querySelector('.hand')!.getBoundingClientRect();
+    const actions = zone.querySelector('.action-bar')!.getBoundingClientRect();
+    return cards.bottom <= actions.top;
+  })).toBe(true);
   await page.getByRole('button', { name: /暗牌声明 · 3 张/ }).click();
   await expect(page.locator('.hand-liarsbar .playing-card')).toHaveCount(2);
   await expect(page.getByRole('button', { name: '质疑上一手' })).toBeVisible();
   await page.getByRole('button', { name: '查看规则' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.getByRole('button', { name: '关闭' }).click();
+  await expect(page.getByRole('button', { name: '质疑上一手' })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
