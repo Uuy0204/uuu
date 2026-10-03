@@ -9,6 +9,7 @@ export interface ClientGame {
   handCounts: Record<string, number>;
   message: string;
   turnDeadline?: number;
+  turnDuration?: number;
   winnerIds?: string[];
   scores?: Record<string, number>;
   current?: { playerId: string; cards: Card[]; combo: { kind: string; value: number; length: number } } | null;
