@@ -7,6 +7,7 @@ export interface Player {
   connected: boolean;
   bot?: boolean;
   seat?: number;
+  reconnectSecret?: string;
 }
 
 export interface Card {

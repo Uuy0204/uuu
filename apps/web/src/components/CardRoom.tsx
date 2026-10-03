@@ -104,10 +104,12 @@ interface OfflineSession {
 }
 
 function getIdentity() {
-  if (typeof window === 'undefined') return { playerId: '', name: '', avatar: 0 };
+  if (typeof window === 'undefined') return { playerId: '', name: '', avatar: 0, reconnectSecret: '' };
   let playerId = localStorage.getItem('xy-player-id');
   if (!playerId) { playerId = createPlayerId(); localStorage.setItem('xy-player-id', playerId); }
-  return { playerId, name: localStorage.getItem('xy-name') ?? '', avatar: Number(localStorage.getItem('xy-avatar') ?? 0) };
+  let reconnectSecret = localStorage.getItem('xy-reconnect-secret');
+  if (!reconnectSecret) { reconnectSecret = `${crypto.randomUUID()}${crypto.randomUUID()}`; localStorage.setItem('xy-reconnect-secret', reconnectSecret); }
+  return { playerId, reconnectSecret, name: localStorage.getItem('xy-name') ?? '', avatar: Number(localStorage.getItem('xy-avatar') ?? 0) };
 }
 
 function createPlayerId() {
@@ -193,7 +195,7 @@ function TurnTimer({ active, deadline, duration = 30_000 }: { active: boolean; d
 }
 
 export function CardRoom() {
-  const [identity, setIdentity] = useState({ playerId: '', name: '', avatar: 0 });
+  const [identity, setIdentity] = useState({ playerId: '', name: '', avatar: 0, reconnectSecret: '' });
   const [gameId, setGameId] = useState<GameId>('doudizhu3');
   const [joinCode, setJoinCode] = useState('');
   const [room, setRoom] = useState<ClientRoom | null>(null);
@@ -288,7 +290,7 @@ export function CardRoom() {
   const prepareIdentity = () => {
     const playerId = identity.playerId || createPlayerId();
     const name = identity.name.trim() || `牌友${playerId.slice(0, 4).toUpperCase()}`;
-    const next = { ...identity, playerId, name };
+    const next = { ...getIdentity(), ...identity, playerId, reconnectSecret: identity.reconnectSecret || getIdentity().reconnectSecret, name };
     localStorage.setItem('xy-player-id', playerId); localStorage.setItem('xy-name', name); localStorage.setItem('xy-avatar', String(identity.avatar));
     setIdentity(next); return next;
   };

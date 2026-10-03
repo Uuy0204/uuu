@@ -57,9 +57,11 @@ function cleanName(value: unknown): string {
 function playerFrom(payload: Record<string, unknown>): Player {
   const id = String(payload.playerId ?? '').slice(0, 80);
   if (!id) throw new Error('玩家身份无效');
+  const reconnectSecret = String(payload.reconnectSecret ?? '').slice(0, 128);
+  if (reconnectSecret.length < 24) throw new Error('身份凭据已失效，请刷新页面');
   const requestedAvatar = Number(payload.avatar ?? 0);
   const avatar = Number.isInteger(requestedAvatar) ? ((requestedAvatar % 8) + 8) % 8 : 0;
-  return { id, name: cleanName(payload.name), avatar, connected: true };
+  return { id, name: cleanName(payload.name), avatar, connected: true, reconnectSecret };
 }
 
 function availableSeat(room: Room): number {
@@ -69,7 +71,7 @@ function availableSeat(room: Room): number {
 }
 
 function clientRoom(room: Room, playerId: string): ClientRoom {
-  return { ...room, game: room.game ? games[room.gameId].view(room.game, playerId) : null };
+  return { ...room, players: room.players.map(({ reconnectSecret: _secret, ...player }) => player), game: room.game ? games[room.gameId].view(room.game, playerId) : null };
 }
 
 function emitRoom(room: Room) {
@@ -220,6 +222,7 @@ io.on('connection', (socket) => {
       if (socket.data.roomCode && socket.data.roomCode !== code) leaveCurrentRoom(socket, true);
       const existing = room.players.find((p) => p.id === incoming.id);
       if (existing) {
+        if (existing.reconnectSecret !== incoming.reconnectSecret) throw new Error('该座位属于另一位玩家');
         const disconnectKey = `${room.code}:${incoming.id}`;
         const timer = disconnectTimers.get(disconnectKey);
         if (timer) clearTimeout(timer);
