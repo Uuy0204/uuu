@@ -25,6 +25,13 @@ const rooms = new Map<string, Room>();
 const roomTimers = new Map<string, NodeJS.Timeout>();
 const disconnectTimers = new Map<string, NodeJS.Timeout>();
 const TURN_MS = 30_000;
+const LIARS_BOT_PAUSE_MS = 3_000;
+
+function liarsBotPause(room: Room): boolean {
+  const game = room.game;
+  if (room.gameId !== 'liarsbar' || !game || !room.players[game.turn]?.bot) return false;
+  return game.phase === 'challenge' || (game.phase === 'playing' && 'lastReveal' in game && Boolean(game.lastReveal));
+}
 
 function roomCode(): string {
   let code = '';
@@ -71,8 +78,10 @@ function clearRoomTimer(code: string) {
 function armTurnTimer(room: Room) {
   clearRoomTimer(room.code);
   if (!room.game || room.status !== 'playing' || room.game.phase === 'finished') return;
-  const deadline = Date.now() + TURN_MS;
+  const duration = liarsBotPause(room) ? LIARS_BOT_PAUSE_MS : TURN_MS;
+  const deadline = Date.now() + duration;
   room.game.turnDeadline = deadline;
+  room.game.turnDuration = duration;
   roomTimers.set(room.code, setTimeout(() => {
     const current = rooms.get(room.code);
     if (!current?.game || current.status !== 'playing' || current.game.turnDeadline !== deadline) return;
@@ -86,7 +95,7 @@ function armTurnTimer(room: Room) {
       emitRoom(current);
       armTurnTimer(current);
     }
-  }, TURN_MS));
+  }, duration));
 }
 
 function fail(ack: ((value: unknown) => void) | undefined, error: unknown) {
@@ -133,6 +142,8 @@ function runBots(room: Room) {
   for (let guard = 0; guard < 300 && room.game.phase !== 'finished'; guard += 1) {
     const player = room.players[room.game.turn];
     if (!player?.bot) break;
+    // Give the other human players time to challenge a bot's claim and see the reveal.
+    if (liarsBotPause(room)) break;
     const action = gameModule.botAction(room.game, room.players, player.id);
     if (!action) break;
     gameModule.action(room.game, room.players, player.id, action);
