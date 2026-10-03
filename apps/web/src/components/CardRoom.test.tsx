@@ -205,6 +205,32 @@ describe('创建房间', () => {
     expect(socketMock.emitWithAck).toHaveBeenLastCalledWith('game:action', { type: 'challenge' });
   });
 
+  it('骗子酒馆相信或质疑后的回合变化不会滚动整页', async () => {
+    mockPlayingRoom('liarsbar', {
+      phase: 'challenge', turn: 0, targetRank: 'A',
+      lastClaim: { playerId: 'player-2', count: 1 }, roundNumber: 1,
+    });
+    const scrollIntoView = vi.spyOn(Element.prototype, 'scrollIntoView');
+    try {
+      await act(async () => root.render(<CardRoom />));
+      await act(async () => buttonWith(container, '骗子酒馆')!.click());
+      await createOnlineRoom(container);
+      scrollIntoView.mockClear();
+      const update = socketMock.on.mock.calls.find(([event]) => event === 'room:update')?.[1] as (room: Record<string, unknown>) => void;
+      const response = await socketMock.emitWithAck('room:create');
+      const room = response.room;
+
+      await act(async () => buttonWith(container, '相信并继续')!.click());
+      await act(async () => update({ ...room, game: { ...room.game, phase: 'playing' } }));
+      await act(async () => update({ ...room, game: { ...room.game, phase: 'challenge', turn: 1 } }));
+      await act(async () => buttonWith(container, '质疑上一手')!.click());
+      await act(async () => update({ ...room, game: { ...room.game, phase: 'playing', turn: 2, roundNumber: 2 } }));
+
+      expect(scrollIntoView).not.toHaveBeenCalled();
+      expect(container.querySelector('.opponents')).not.toBeNull();
+    } finally { scrollIntoView.mockRestore(); }
+  });
+
   it('线上质疑使用与线下相同的左轮，并先转轮再显示结果', async () => {
     vi.useFakeTimers();
     try {
