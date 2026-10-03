@@ -332,7 +332,13 @@ export function CardRoom() {
   }, [room?.code, room?.status, offline?.gameId]);
 
   useEffect(() => {
-    document.querySelector('.player-chip.turn')?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    const strip = document.querySelector<HTMLElement>('.opponents');
+    const active = strip?.querySelector<HTMLElement>('.player-chip.turn');
+    if (!strip || !active) return;
+    // scrollIntoView also scrolls the page on mobile browsers, moving the action buttons away.
+    const stripLeft = strip.getBoundingClientRect().left;
+    const activeLeft = active.getBoundingClientRect().left;
+    strip.scrollLeft += activeLeft - stripLeft - (strip.clientWidth - active.clientWidth) / 2;
   }, [gameTurn, gamePhase]);
 
   useEffect(() => {
