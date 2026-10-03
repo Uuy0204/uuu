@@ -231,6 +231,40 @@ describe('创建房间', () => {
     } finally { scrollIntoView.mockRestore(); }
   });
 
+  it('骗子酒馆选三张时，同一手牌的房间更新不会清掉已选牌', async () => {
+    const hand = ['A', 'K', 'Q', 'A', 'K'].map((rank, index) => ({ id: `card-${index}`, rank, suit: 'S', value: 14 }));
+    mockPlayingRoom('liarsbar', { phase: 'playing', turn: 0, hand, targetRank: 'A', roundNumber: 1 });
+    await act(async () => root.render(<CardRoom />));
+    await act(async () => buttonWith(container, '骗子酒馆')!.click());
+    await createOnlineRoom(container);
+    const cards = container.querySelectorAll<HTMLButtonElement>('.hand-liarsbar .playing-card');
+    await act(async () => cards[0]!.click());
+    await act(async () => cards[1]!.click());
+    const update = socketMock.on.mock.calls.find(([event]) => event === 'room:update')?.[1] as (room: Record<string, unknown>) => void;
+    const room = (await socketMock.emitWithAck('room:create')).room;
+    await act(async () => update({ ...room, game: { ...room.game, message: '房间同步' } }));
+    expect(container.textContent).toContain('已选 2/3');
+    await act(async () => cards[2]!.click());
+    await act(async () => buttonWith(container, '暗牌声明 · 3 张')!.click());
+    expect(socketMock.emitWithAck).toHaveBeenLastCalledWith('game:action', { type: 'play', cardIds: ['card-0', 'card-1', 'card-2'] });
+  });
+
+  it('德州线下使用实体牌并显示虚拟筹码、盲注和下注按钮', async () => {
+    await act(async () => root.render(<CardRoom />));
+    await act(async () => buttonWith(container, '德州扑克')!.click());
+    await act(async () => buttonWith(container, '开始游戏')!.click());
+    await act(async () => buttonWith(container, '实体牌 · 手机筹码')!.click());
+    await act(async () => buttonWith(container, '进入实体牌记分器')!.click());
+    expect(container.textContent).toContain('底池');
+    expect(container.textContent).toContain('30');
+    expect(container.textContent).toContain('需跟注 10');
+    expect(container.querySelectorAll('.offline-poker-seat')).toHaveLength(2);
+    await act(async () => buttonWith(container, '跟注 10')!.click());
+    await act(async () => buttonWith(container, '过牌')!.click());
+    expect(container.textContent).toContain('翻牌');
+    expect(JSON.parse(localStorage.getItem('xy-offline-session')!).poker.street).toBe('flop');
+  });
+
   it('线上质疑使用与线下相同的左轮，并先转轮再显示结果', async () => {
     vi.useFakeTimers();
     try {
