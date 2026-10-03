@@ -6,6 +6,8 @@ import { socket } from '@/lib/socket';
 import { GAME_INFO, type Card, type ClientRoom, type GameId, type HistoryItem } from '@/lib/types';
 import { playCue } from '@/lib/sound';
 import { RevolverStage } from './RevolverStage';
+import { OfflinePokerTable } from './OfflinePokerTable';
+import { createOfflinePoker, type OfflinePokerState } from './offlinePoker';
 
 const AVATARS = ['松', '竹', '梅', '兰', '云', '月', '山', '海'];
 const SUITS: Record<Card['suit'], string> = { S: '♠', H: '♥', C: '♣', D: '♦', J: '★' };
@@ -95,6 +97,7 @@ interface OfflineSession {
   bulletCount: number;
   bulletChambers: Record<string, number[]>;
   message: string;
+  poker?: OfflinePokerState;
 }
 
 function getIdentity() {
@@ -204,6 +207,7 @@ export function CardRoom() {
   const [vibrationEnabled, setVibrationEnabled] = useState(true);
   const previousGame = useRef<{ room: string; round: number; phase: string; turn: number; hand: string; play: string; reveal: string; pot: number; community: number } | null>(null);
   const revealCueTimers = useRef<number[]>([]);
+  const selectionContext = useRef<{ room: string; round: number; phase: string; turn: number; liarRound?: number } | null>(null);
 
   useEffect(() => () => { revealCueTimers.current.forEach(window.clearTimeout); }, []);
 
@@ -220,7 +224,16 @@ export function CardRoom() {
     setVibrationEnabled(localStorage.getItem('xy-vibration') !== 'off');
     /* eslint-enable react-hooks/set-state-in-effect */
     const update = (next: ClientRoom) => {
-      setRoom(next); setSelected([]); sessionStorage.setItem('xy-room', next.code);
+      const context = next.game ? { room: next.code, round: next.round, phase: next.game.phase, turn: next.game.turn, liarRound: next.game.roundNumber } : null;
+      const before = selectionContext.current;
+      selectionContext.current = context;
+      if (!context || !before || context.room !== before.room || context.round !== before.round || context.phase !== before.phase || context.turn !== before.turn || context.liarRound !== before.liarRound) {
+        setSelected([]);
+      } else {
+        const handIds = new Set(next.game?.hand.map((card) => card.id) ?? []);
+        setSelected((ids) => ids.filter((id) => handIds.has(id)));
+      }
+      setRoom(next); sessionStorage.setItem('xy-room', next.code);
       if (next.status === 'playing') { localStorage.setItem('xy-recent-room', next.code); setRecentRoom(next.code); }
       if (next.status === 'finished') { localStorage.removeItem('xy-recent-room'); setRecentRoom(''); }
       if (next.status === 'finished' && next.game?.scores) {
@@ -290,6 +303,7 @@ export function CardRoom() {
         bulletCount: setup.bulletCount,
         bulletChambers: Object.fromEntries(players.map((player) => [player.id, randomBulletChambers(setup.bulletCount)])),
         message: gameId === 'liarsbar' ? '发好暗牌，开始第一轮声明' : '线下牌局已就绪',
+        ...(gameId === 'poker' ? { poker: createOfflinePoker(players, setup.hostSeat) } : {}),
       };
       localStorage.setItem('xy-offline-session', JSON.stringify(nextOffline));
       setOffline(nextOffline);
@@ -383,6 +397,7 @@ export function CardRoom() {
     return updated;
   });
 
+  if (offline?.gameId === 'poker') return <OfflinePokerTable initial={{ ...offline, gameId: 'poker' }} localPlayerId={identity.playerId} onRecord={(score) => recordOffline('poker', score)} onExit={() => { localStorage.removeItem('xy-offline-session'); setOffline(null); }} />;
   if (offline) return <OfflineTable session={offline} localPlayerId={identity.playerId} soundEnabled={soundEnabled} onSound={(value) => { setSoundEnabled(value); localStorage.setItem('xy-sound', value ? 'on' : 'off'); }} onRecord={recordOffline} onExit={() => { localStorage.removeItem('xy-offline-session'); setOffline(null); }} />;
 
   if (!room) return <main className="home-shell">
@@ -446,7 +461,7 @@ function GameSetup({ gameId, onClose, onStart }: { gameId: GameId; onClose: () =
   return <Modal title={`${info.name} · 开始游戏`} onClose={onClose}>
     {step === 'mode' ? <div className={`mode-picker ${gameId === 'fishing' ? 'single-mode' : ''}`}>
       {gameId !== 'fishing' && <button onClick={() => chooseMode('online')}><span className="mode-icon online"><Wifi size={26} /></span><strong>线上模式</strong><small>创建房间，亲友各自在设备上加入</small><ArrowRight size={18} /></button>}
-      <button onClick={() => chooseMode('offline')}><span className="mode-icon offline"><Users size={26} /></span><strong>{gameId === 'fishing' ? '线下玩法' : '实体牌记分'}</strong><small>{gameId === 'fishing' ? '使用实体纸牌聚会，手机记录座位、轮次与积分' : '使用实体纸牌，手机负责座位、轮次与积分'}</small><ArrowRight size={18} /></button>
+      <button onClick={() => chooseMode('offline')}><span className="mode-icon offline"><Users size={26} /></span><strong>{gameId === 'fishing' ? '线下玩法' : gameId === 'poker' ? '实体牌 · 手机筹码' : '实体牌记分'}</strong><small>{gameId === 'poker' ? '使用实体纸牌，手机负责盲注、下注和底池结算' : gameId === 'fishing' ? '使用实体纸牌聚会，手机记录座位、轮次与积分' : '使用实体纸牌，手机负责座位、轮次与积分'}</small><ArrowRight size={18} /></button>
     </div> : <div className="setup-options">
       <button className="setup-back" onClick={() => setStep('mode')}><ChevronLeft size={17} />{mode === 'online' ? '线上模式' : '实体牌记分器'}</button>
       <div className="setup-group"><div className="setup-label"><span>参与人数</span><b>{playerCount} 人</b></div><div className="segment-row">{counts.map((count) => <button key={count} className={playerCount === count ? 'active' : ''} onClick={() => chooseCount(count)}>{count}</button>)}</div></div>
