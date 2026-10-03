@@ -23,6 +23,7 @@ export interface BaseGame {
   hands: Record<string, Card[]>;
   message: string;
   turnDeadline?: number;
+  turnDuration?: number;
   winnerIds?: string[];
   scores?: Record<string, number>;
 }
