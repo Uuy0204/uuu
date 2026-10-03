@@ -219,7 +219,7 @@ io.on('connection', (socket) => {
       const room = rooms.get(code);
       if (!room) throw new Error('没有找到这个房间');
       const incoming = playerFrom(payload);
-      if (socket.data.roomCode && socket.data.roomCode !== code) leaveCurrentRoom(socket, true);
+      if (socket.data.roomCode && (socket.data.roomCode !== code || socket.data.playerId !== incoming.id)) leaveCurrentRoom(socket, true);
       const existing = room.players.find((p) => p.id === incoming.id);
       if (existing) {
         if (existing.reconnectSecret !== incoming.reconnectSecret) throw new Error('该座位属于另一位玩家');
