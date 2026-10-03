@@ -140,6 +140,10 @@ describe('创建房间', () => {
     expect(container.textContent).toContain('目标牌');
     expect(container.querySelectorAll('.offline-player')).toHaveLength(3);
     expect(container.querySelector('.revolver-stage svg')).not.toBeNull();
+    const shooter = container.querySelector<HTMLSelectElement>('select[aria-label="选择开枪者"]')!;
+    expect(shooter.options).toHaveLength(3);
+    await act(async () => { shooter.value = 'offline-1'; shooter.dispatchEvent(new Event('change', { bubbles: true })); });
+    expect(JSON.parse(localStorage.getItem('xy-offline-session')!).current).toBe(1);
     expect(localStorage.getItem('xy-offline-session')).toContain('"bulletChambers"');
     expect(localStorage.getItem('xy-offline-session')).toContain('"matchRounds":1');
   });

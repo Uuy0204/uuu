@@ -273,4 +273,31 @@ describe('游戏初始化', () => {
     expect(state.turn).toBe(1);
     expect(() => games.liarsbar.action(state, participants, 'p2', { type: 'challenge' })).not.toThrow();
   });
+
+  it('骗子酒馆下一轮首次出牌后收起旧翻牌结果，桌面显示新的暗牌', () => {
+    const participants = players(2);
+    const state = games.liarsbar.create(participants) as ReturnType<typeof games.liarsbar.create> & {
+      targetRank: string; lastReveal: { liar: boolean } | null; tableCount: number;
+      bulletChambers: Record<string, number[]>;
+    };
+    state.targetRank = 'A';
+    state.bulletChambers.p1 = [6];
+    state.hands.p0 = [{ id: 'truth', rank: 'A', suit: 'S', value: 14 }];
+    games.liarsbar.action(state, participants, 'p0', { type: 'play', cardIds: ['truth'] });
+    games.liarsbar.action(state, participants, 'p1', { type: 'challenge' });
+    expect(state.lastReveal?.liar).toBe(false);
+    expect(state.turn).toBe(1);
+    const nextCard = state.hands.p1![0]!;
+    games.liarsbar.action(state, participants, 'p1', { type: 'play', cardIds: [nextCard.id] });
+    expect(state.lastReveal).toBeNull();
+    expect(state.tableCount).toBe(1);
+    expect(games.liarsbar.view(state, 'p0').lastClaim).toEqual({ playerId: 'p1', count: 1 });
+  });
+
+  it('骗子酒馆拒绝未入座身份抢先质疑', () => {
+    const participants = players(3);
+    const state = games.liarsbar.create(participants);
+    games.liarsbar.action(state, participants, 'p0', { type: 'play', cardIds: [state.hands.p0![0]!.id] });
+    expect(() => games.liarsbar.action(state, participants, 'unknown', { type: 'challenge' })).toThrow('不在当前牌局');
+  });
 });
