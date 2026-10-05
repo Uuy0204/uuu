@@ -20,6 +20,52 @@ test('窄屏主页与德州线下操作、撤销和刷新恢复', async ({ page 
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
+test('线下德州存档不会遮住线上房间刷新回座', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('.game-choice').filter({ hasText: '德州扑克' }).click();
+  await page.getByRole('button', { name: '开始游戏' }).click();
+  await page.getByRole('button', { name: /实体牌 · 手机筹码/ }).click();
+  await page.getByRole('button', { name: /进入实体牌记分器/ }).click();
+  await page.getByRole('button', { name: '返回首页并保存牌局' }).click();
+  await page.locator('.game-choice').filter({ hasText: '骗子酒馆' }).click();
+  await page.getByRole('button', { name: '开始游戏' }).click();
+  await page.getByRole('button', { name: /线上模式/ }).click();
+  await page.getByRole('button', { name: /创建线上房间/ }).click();
+  const code = (await page.locator('.room-code').innerText()).replace(/\D/g, '');
+  await page.reload();
+  await expect(page.locator('.room-code')).toContainText(code);
+  await expect(page.locator('.room-header')).toContainText('骗子酒馆');
+  await page.getByRole('button', { name: '返回首页' }).click();
+});
+
+test('两名真人依次相信和质疑后页面保持可操作', async ({ page, browser }) => {
+  const guestContext = await browser.newContext({ viewport: page.viewportSize() ?? { width: 390, height: 844 } });
+  const guest = await guestContext.newPage();
+  try {
+    await page.goto('/');
+    await page.locator('.game-choice').filter({ hasText: '骗子酒馆' }).click();
+    await page.getByRole('button', { name: '开始游戏' }).click();
+    await page.getByRole('button', { name: /线上模式/ }).click();
+    await page.getByRole('button', { name: /创建线上房间/ }).click();
+    const code = (await page.locator('.room-code').innerText()).replace(/\D/g, '');
+    await guest.goto('/');
+    await guest.getByRole('textbox', { name: '手机端六位房间号' }).fill(code);
+    await guest.getByRole('button', { name: /加入房间/ }).click();
+    await page.getByRole('button', { name: '开始牌局' }).click();
+    await page.locator('.hand-liarsbar .playing-card').first().click();
+    await page.getByRole('button', { name: /暗牌声明 · 1 张/ }).click();
+    await guest.getByRole('button', { name: '相信并继续' }).click();
+    await guest.locator('.hand-liarsbar .playing-card').first().click();
+    await guest.getByRole('button', { name: /暗牌声明 · 1 张/ }).click();
+    await page.getByRole('button', { name: '质疑上一手' }).click();
+    await expect(page.locator('.liar-reveal, .settlement').first()).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    expect(await guest.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  } finally {
+    await guestContext.close();
+  }
+});
+
 test('窄屏骗子酒馆三张选择和声明后仍可操作', async ({ page }) => {
   await page.goto('/');
   await page.locator('.game-choice').filter({ hasText: '骗子酒馆' }).click();
