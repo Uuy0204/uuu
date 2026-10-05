@@ -125,6 +125,24 @@ describe('创建房间', () => {
     expect(create.disabled).toBe(false);
   });
 
+  it('房间服务未连接时等待连上再创建房间', async () => {
+    socketMock.connected = false;
+    try {
+      await act(async () => root.render(<CardRoom />));
+      await act(async () => buttonWith(container, '开始游戏')!.click());
+      await act(async () => buttonWith(container, '线上模式')!.click());
+      await act(async () => buttonWith(container, '创建线上房间')!.click());
+      expect(container.textContent).toContain('正在连接房间服务');
+      expect(socketMock.emitWithAck).not.toHaveBeenCalled();
+      await act(async () => {
+        socketMock.connected = true;
+        for (const [event, listener] of socketMock.on.mock.calls) if (event === 'connect') listener();
+      });
+      expect(socketMock.emitWithAck).toHaveBeenCalledWith('room:create', expect.anything());
+      expect(container.textContent).toContain('ROOM 123456');
+    } finally { socketMock.connected = true; }
+  });
+
   it('骗子酒馆线下模式可选择人数和座位，并创建独立弹巢', async () => {
     await act(async () => root.render(<CardRoom />));
     await act(async () => buttonWith(container, '骗子酒馆')!.click());
