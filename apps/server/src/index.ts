@@ -27,7 +27,8 @@ const rooms = new Map<string, Room>();
 const roomTimers = new Map<string, NodeJS.Timeout>();
 const disconnectTimers = new Map<string, NodeJS.Timeout>();
 const TURN_MS = 30_000;
-const LIARS_BOT_PAUSE_MS = 6_000;
+const LIARS_CHALLENGE_PAUSE_MS = 6_000;
+const LIARS_REVEAL_PAUSE_MS = 1_800;
 let pendingSnapshot: Promise<void> = Promise.resolve();
 function snapshot() {
   if (!durableRooms) return;
@@ -36,10 +37,11 @@ function snapshot() {
   void pendingSnapshot.catch((error) => console.error('房间持久化失败', error));
 }
 
-function liarsBotPause(room: Room): boolean {
+function liarsBotDelay(room: Room): number {
   const game = room.game;
-  if (room.gameId !== 'liarsbar' || !game || !room.players[game.turn]?.bot) return false;
-  return game.phase === 'challenge' || (game.phase === 'playing' && 'lastReveal' in game && Boolean(game.lastReveal));
+  if (room.gameId !== 'liarsbar' || !game || !room.players[game.turn]?.bot) return 0;
+  if (game.phase === 'challenge') return LIARS_CHALLENGE_PAUSE_MS;
+  return game.phase === 'playing' && 'lastReveal' in game && game.lastReveal ? LIARS_REVEAL_PAUSE_MS : 0;
 }
 
 function roomCode(): string {
@@ -91,7 +93,7 @@ function clearRoomTimer(code: string) {
 function armTurnTimer(room: Room) {
   clearRoomTimer(room.code);
   if (!room.game || room.status !== 'playing' || room.game.phase === 'finished') return;
-  const duration = liarsBotPause(room) ? LIARS_BOT_PAUSE_MS : TURN_MS;
+  const duration = liarsBotDelay(room) || TURN_MS;
   const deadline = Date.now() + duration;
   room.game.turnDeadline = deadline;
   room.game.turnDuration = duration;
@@ -162,7 +164,7 @@ function runBots(room: Room) {
     const player = room.players[room.game.turn];
     if (!player?.bot) break;
     // Give the other human players time to challenge a bot's claim and see the reveal.
-    if (liarsBotPause(room)) break;
+    if (liarsBotDelay(room)) break;
     const action = gameModule.botAction(room.game, room.players, player.id);
     if (!action) break;
     gameModule.action(room.game, room.players, player.id, action);

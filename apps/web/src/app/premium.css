@@ -140,6 +140,10 @@ html, body { background: var(--paper); }
   .turn-status { justify-content: space-between; padding: 0 5px; font-size: 12px; }
   .hand { height: 105px; padding-top: 12px; }
   .hand.hand-liarsbar { height: 104px; }
+  .hand .playing-card { animation-duration: .2s; animation-delay: calc(var(--deal-index, 0) * 12ms); }
+  .player-zone { backdrop-filter: none; }
+  .center-status b, .center-status span { backdrop-filter: none; }
+  .revolver-body { filter: none; }
   .action-stack > span, .raise-hint { font-size: 11px; }
   .action-bar { width: 100%; flex-wrap: wrap; gap: 7px; }
   .action-bar .primary-button, .action-bar .secondary-button, .action-bar .text-button, .action-bar .challenge-button, .action-bar .allin-button { min-height: 44px; }
@@ -153,6 +157,10 @@ html, body { background: var(--paper); }
   .offline-poker-results { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .modal-backdrop { align-items: end; padding: 10px 10px max(10px, env(safe-area-inset-bottom)); }
   .modal { width: 100%; max-height: calc(100dvh - 20px - env(safe-area-inset-bottom)); overscroll-behavior: contain; border-radius: 16px 16px 10px 10px; }
+}
+@media (hover: none) {
+  .playing-card:not(:disabled):hover { transform: none; box-shadow: 0 4px 9px #00150d55, inset 0 0 0 2px #ffffffb8; }
+  .playing-card.selected:hover { transform: translateY(-18px); box-shadow: 0 0 0 2px #e1b557, 0 16px 23px #00150d73; }
 }
 @media (max-width: 390px) {
   .featured-copy { width: 70%; padding-left: 17px; }
