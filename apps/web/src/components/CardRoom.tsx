@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRight, Bot, ChevronLeft, CircleHelp, Clock3, Copy, Crosshair, DoorOpen, Eye, History, MessageCircle, Minus, Plus, RotateCcw, Settings, Sparkles, Users, Volume2, VolumeX, Wifi, Wine, X } from 'lucide-react';
 import { socket } from '@/lib/socket';
 import { GAME_INFO, type Card, type ClientRoom, type GameId, type HistoryItem } from '@/lib/types';
@@ -156,12 +156,12 @@ function readOfflineSession(): OfflineSession | null {
   } catch { return null; }
 }
 
-function PlayingCard({ card, selected, onClick, small = false, dealIndex }: { card: Card; selected?: boolean; onClick?: () => void; small?: boolean; dealIndex?: number }) {
+const PlayingCard = memo(function PlayingCard({ card, selected, onSelect, small = false, dealIndex }: { card: Card; selected?: boolean; onSelect?: (id: string) => void; small?: boolean; dealIndex?: number }) {
   const red = card.suit === 'H' || card.suit === 'D' || card.rank.includes('王');
-  return <button type="button" className={`playing-card ${red ? 'red-card' : ''} ${card.suit === 'J' ? 'joker-card' : ''} ${selected ? 'selected' : ''} ${small ? 'small' : ''}`} style={dealIndex === undefined ? undefined : { '--deal-index': Math.min(dealIndex, 18) } as React.CSSProperties} onClick={onClick} disabled={!onClick} aria-label={`${card.rank}${SUITS[card.suit]}`} aria-pressed={onClick ? Boolean(selected) : undefined}>
+  return <button type="button" className={`playing-card ${red ? 'red-card' : ''} ${card.suit === 'J' ? 'joker-card' : ''} ${selected ? 'selected' : ''} ${small ? 'small' : ''}`} style={dealIndex === undefined ? undefined : { '--deal-index': Math.min(dealIndex, 18) } as React.CSSProperties} onClick={onSelect ? () => onSelect(card.id) : undefined} disabled={!onSelect} aria-label={`${card.rank}${SUITS[card.suit]}`} aria-pressed={onSelect ? Boolean(selected) : undefined}>
     <span className="card-rank">{card.rank}</span><span className="card-suit">{SUITS[card.suit]}</span><span className="card-center" aria-hidden="true">{SUITS[card.suit]}</span><span className="card-tail" aria-hidden="true">{card.rank}<br />{SUITS[card.suit]}</span>
   </button>;
-}
+});
 
 function ChipStack({ amount, compact = false }: { amount: number; compact?: boolean }) {
   const layers = amount > 0 ? Math.min(5, Math.max(2, Math.ceil(amount / 250))) : 0;
@@ -186,7 +186,7 @@ function TurnTimer({ active, deadline, duration = 30_000 }: { active: boolean; d
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     if (!active) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 250);
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [active]);
   const seconds = Math.max(0, Math.ceil(((deadline ?? now + 30_000) - now) / 1000));
@@ -279,11 +279,18 @@ export function CardRoom() {
   }, []);
 
   const emit = async (event: string, payload: unknown = {}): Promise<{ ok: boolean; room?: ClientRoom; error?: string }> => {
-    setBusy(true); setNotice('');
+    setBusy(true); setNotice(socket.connected ? '' : '正在连接房间服务，请稍候…');
     try {
-      if (!socket.connected) socket.connect();
-      const result = await socket.timeout(6000).emitWithAck(event, payload) as { ok: boolean; room?: ClientRoom; error?: string };
+      if (!socket.connected) await new Promise<void>((resolve, reject) => {
+        const timer = window.setTimeout(() => { socket.off('connect', onConnect); reject(new Error('连接超时')); }, 30_000);
+        const onConnect = () => { window.clearTimeout(timer); socket.off('connect', onConnect); resolve(); };
+        socket.on('connect', onConnect);
+        socket.connect();
+        if (socket.connected) onConnect();
+      });
+      const result = await socket.timeout(8000).emitWithAck(event, payload) as { ok: boolean; room?: ClientRoom; error?: string };
       if (!result.ok) setNotice(result.error ?? '操作失败');
+      else setNotice('');
       return result;
     } catch {
       const result = { ok: false, error: '无法连接房间服务，请刷新后重试' };
@@ -593,9 +600,12 @@ function Lobby({ room, isHost, busy, notice, onAddBot, onStart }: { room: Client
   </section>;
 }
 
-function GameTable({ room, playerId, selected, setSelected, isTurn, soundEnabled, action, busy, notice, onRestart }: { room: ClientRoom; playerId: string; selected: string[]; setSelected: (ids: string[]) => void; isTurn: boolean; soundEnabled: boolean; action: (value: unknown) => Promise<unknown>; busy: boolean; notice: string; onRestart: () => void }) {
+function GameTable({ room, playerId, selected, setSelected, isTurn, soundEnabled, action, busy, notice, onRestart }: { room: ClientRoom; playerId: string; selected: string[]; setSelected: React.Dispatch<React.SetStateAction<string[]>>; isTurn: boolean; soundEnabled: boolean; action: (value: unknown) => Promise<unknown>; busy: boolean; notice: string; onRestart: () => void }) {
   const game = room.game!;
-  const toggle = (id: string) => { setSelected(selected.includes(id) ? selected.filter((value) => value !== id) : [...selected, id]); if (soundEnabled) playCue('select'); };
+  const toggle = useCallback((id: string) => {
+    setSelected((current) => current.includes(id) ? current.filter((value) => value !== id) : game.gameId === 'liarsbar' && current.length >= 3 ? current : [...current, id]);
+    if (soundEnabled) playCue('select');
+  }, [game.gameId, setSelected, soundEnabled]);
   return <section className={`table-area combo-${game.current?.combo.kind ?? 'none'} phase-${game.phase} ${isTurn ? 'my-turn' : ''}`}>
     <div className={`opponents player-count-${room.players.length}`}>{room.players.map((player, index) => <div className={`player-chip ${game.gameId === 'poker' ? 'poker-player' : ''} ${index === game.turn ? 'turn' : ''} ${player.id === playerId ? 'self' : ''} ${game.folded?.includes(player.id) || game.eliminated?.includes(player.id) ? 'folded' : ''} ${game.gameId === 'doudizhu4' && game.variant === 'team' ? index % 2 === 0 ? 'team-blue' : 'team-orange' : ''}`} key={player.id}><span>{AVATARS[player.avatar] ?? '友'}</span><div><strong>{player.name}{player.id === playerId ? ' · 我' : ''}</strong><small><PlayerStatus room={room} playerId={player.id} index={index} /></small>{game.gameId === 'liarsbar' && !game.eliminated?.includes(player.id) && <div className="shot-meter" aria-label={`${game.shots?.[player.id] ?? 0} 次空膛`}>{Array.from({ length: 6 }, (_, chamber) => <i className={chamber < (game.shots?.[player.id] ?? 0) ? 'spent' : ''} key={chamber} />)}</div>}</div>{game.gameId === 'poker' && <ChipStack amount={game.stacks?.[player.id] ?? 0} compact />}{index === game.turn && game.phase !== 'finished' && <TurnTimer key={`${game.turn}-${game.phase}-${game.turnDeadline}`} active deadline={game.turnDeadline} duration={game.turnDuration} />}</div>)}</div>
     <div className="felt-center">
@@ -605,7 +615,7 @@ function GameTable({ room, playerId, selected, setSelected, isTurn, soundEnabled
     </div>
     {game.phase === 'finished' ? <Settlement room={room} playerId={playerId} onRestart={onRestart} /> : <div className="player-zone">
       <div className="turn-status" role="status"><span className={isTurn ? 'active' : ''}>{isTurn ? '轮到你行动' : `等待 ${room.players[game.turn]?.name ?? '牌友'} 行动`}</span><small>{game.gameId === 'liarsbar' ? `已选 ${selected.length} / 3 张` : game.gameId === 'poker' ? (PHASE_LABELS[game.phase] ?? game.phase) : game.gameId === 'fishing' ? '翻牌钓鱼' : `已选 ${selected.length} 张`}</small></div>
-      <div className={`hand hand-${game.gameId}`}>{game.gameId === 'fishing' ? <div className="draw-pile"><i /><i /><i /><strong>{game.hand.length}</strong><span>点击“翻一张牌”</span></div> : game.hand.map((card, index) => <PlayingCard key={card.id} card={card} dealIndex={index} selected={selected.includes(card.id)} onClick={game.gameId === 'poker' ? undefined : () => toggle(card.id)} />)}</div>
+      <div className={`hand hand-${game.gameId}`}>{game.gameId === 'fishing' ? <div className="draw-pile"><i /><i /><i /><strong>{game.hand.length}</strong><span>点击“翻一张牌”</span></div> : game.hand.map((card, index) => <PlayingCard key={card.id} card={card} dealIndex={index} selected={selected.includes(card.id)} onSelect={game.gameId === 'poker' || !isTurn || busy || game.phase !== 'playing' ? undefined : toggle} />)}</div>
       <GameActions game={game} playerId={playerId} selected={selected} isTurn={isTurn} busy={busy} action={action} onHint={() => setSelected(game.suggestion ?? [])} />
       {notice && <p className="inline-notice">{notice}</p>}
     </div>}

@@ -83,6 +83,15 @@ test('窄屏骗子酒馆三张选择和声明后仍可操作', async ({ page }) 
   }
   await expect(page.locator('.hand-liarsbar .playing-card.selected')).toHaveCount(3);
   await expect(page.locator('.turn-status')).toContainText('已选 3 / 3 张');
+  await cards.nth(3).click();
+  await expect(page.locator('.hand-liarsbar .playing-card.selected')).toHaveCount(3);
+  await cards.nth(1).click();
+  await cards.nth(3).click();
+  await expect(page.locator('.hand-liarsbar .playing-card.selected')).toHaveCount(3);
+  expect(await cards.last().evaluate((card) => {
+    const style = getComputedStyle(card);
+    return parseFloat(style.animationDuration) <= 0.2 && parseFloat(style.animationDelay) <= 0.25;
+  })).toBe(true);
   expect(await page.locator('.player-zone').evaluate((zone) => {
     const cards = zone.querySelector('.hand')!.getBoundingClientRect();
     const actions = zone.querySelector('.action-bar')!.getBoundingClientRect();

@@ -249,6 +249,20 @@ describe('创建房间', () => {
     expect(socketMock.emitWithAck).toHaveBeenLastCalledWith('game:action', { type: 'play', cardIds: ['card-0', 'card-1', 'card-2'] });
   });
 
+  it('连续点牌最多选三张，取消后可以改选另一张', async () => {
+    const hand = ['A', 'K', 'Q', 'A', 'K'].map((rank, index) => ({ id: `card-${index}`, rank, suit: 'S', value: 14 }));
+    mockPlayingRoom('liarsbar', { hand, targetRank: 'A', roundNumber: 1 });
+    await act(async () => root.render(<CardRoom />));
+    await act(async () => buttonWith(container, '骗子酒馆')!.click());
+    await createOnlineRoom(container);
+    const cards = container.querySelectorAll<HTMLButtonElement>('.hand-liarsbar .playing-card');
+    await act(async () => { cards[0]!.click(); cards[1]!.click(); cards[2]!.click(); cards[3]!.click(); });
+    expect([...cards].filter((card) => card.getAttribute('aria-pressed') === 'true')).toHaveLength(3);
+    await act(async () => { cards[1]!.click(); cards[3]!.click(); });
+    await act(async () => buttonWith(container, '暗牌声明 · 3 张')!.click());
+    expect(socketMock.emitWithAck).toHaveBeenLastCalledWith('game:action', { type: 'play', cardIds: ['card-0', 'card-2', 'card-3'] });
+  });
+
   it('德州线下使用实体牌并显示虚拟筹码、盲注和下注按钮', async () => {
     await act(async () => root.render(<CardRoom />));
     await act(async () => buttonWith(container, '德州扑克')!.click());
