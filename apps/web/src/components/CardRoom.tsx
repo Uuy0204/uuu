@@ -225,7 +225,12 @@ export function CardRoom() {
     setHistory(readHistory());
     setConnected(socket.connected);
     setRecentRoom(localStorage.getItem('xy-recent-room') ?? '');
-    setOffline(readOfflineSession());
+    const savedSession = readOfflineSession();
+    // A tab already seated in an online room must reconnect there first. Keep
+    // the offline hand available through the resume button if rejoin fails.
+    const onlineRoomCode = sessionStorage.getItem('xy-room');
+    setOffline(onlineRoomCode ? null : savedSession);
+    setSavedOffline(Boolean(onlineRoomCode && savedSession));
     setSoundEnabled(localStorage.getItem('xy-sound') !== 'off');
     setVibrationEnabled(localStorage.getItem('xy-vibration') !== 'off');
     /* eslint-enable react-hooks/set-state-in-effect */

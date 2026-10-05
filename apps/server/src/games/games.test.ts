@@ -164,6 +164,23 @@ describe('游戏初始化', () => {
     expect(findBotPlay(cards([3, 7, 9]), previous, ['plane-single'])).toEqual([]);
   });
 
+  it('飞机带单可压牌时服务器拒绝要不起，提示与机器人选择合法组合', () => {
+    const participants = players(3);
+    const state = games.paodekuai.create(participants) as ReturnType<typeof games.paodekuai.create> & {
+      current: { playerId: string; cards: Card[]; combo: NonNullable<ReturnType<typeof classify>> } | null;
+      firstMove: boolean;
+    };
+    const previous = cards([3, 3, 3, 4, 4, 4, 8, 9]);
+    state.current = { playerId: 'p0', cards: previous, combo: classify(previous)! };
+    state.firstMove = false; state.turn = 1;
+    state.hands.p1 = cards([5, 5, 5, 6, 6, 6, 10, 10, 14]);
+    const suggestion = games.paodekuai.view(state, 'p1').suggestion as string[];
+    expect(suggestion).toHaveLength(8);
+    expect(classify(state.hands.p1.filter((card) => suggestion.includes(card.id)))).toEqual({ kind: 'plane-single', value: 6, length: 8 });
+    expect(games.paodekuai.botAction(state, participants, 'p1')).toEqual({ type: 'play', cardIds: suggestion });
+    expect(() => games.paodekuai.action(state, participants, 'p1', { type: 'pass' })).toThrow('有牌能压');
+  });
+
   it('争上游发完整 54 张牌，并允许有牌时策略性过牌', () => {
     const participants = players(4);
     const state = games.zhengshangyou.create(participants) as ReturnType<typeof games.zhengshangyou.create> & {
