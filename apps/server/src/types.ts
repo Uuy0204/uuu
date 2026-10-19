@@ -44,6 +44,7 @@ export interface Room {
   createdAt: number;
   updatedAt?: number;
   messages: ChatMessage[];
+  blockedPlayerIds?: string[];
 }
 
 export interface ChatMessage { id: string; playerId: string; name: string; text: string; at: number }

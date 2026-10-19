@@ -1,6 +1,7 @@
 import type { BaseGame, Card, GameModule, Player } from '../types.js';
 import { baseView, dealRoundRobin, deck, nextActive, removeCards, shuffle, sortCards } from './cards.js';
 import { beats, classify, findBotPlay, type Combo } from './doudizhu-common.js';
+import { calculateScores } from './scoring.js';
 
 interface Ddz4State extends BaseGame {
   gameId: 'doudizhu4';
@@ -24,11 +25,8 @@ function activeIndices(state: Ddz4State, players: Player[]) {
 function finish(state: Ddz4State, players: Player[]) {
   const last = players.find((p) => !state.rankings.includes(p.id));
   if (last) state.rankings.push(last.id);
-  const rawUnit = Number((state.multiplier * 0.1).toFixed(1));
-  const unit = Math.min(rawUnit, 10 / 3);
-  const weights = [3, 0, -1, -2];
-  state.scores = Object.fromEntries(state.rankings.map((id, index) => [id, Number((unit * weights[index]!).toFixed(1))]));
   state.winnerIds = [state.rankings[0]!];
+  state.scores = calculateScores('doudizhu4', players.map((p) => p.id), state.winnerIds, state.multiplier);
   state.phase = 'finished';
   state.message = `${players.find((p) => p.id === state.rankings[0])?.name} 获得第一名`;
 }
@@ -36,9 +34,8 @@ function finish(state: Ddz4State, players: Player[]) {
 function finishTeam(state: Ddz4State, players: Player[], winnerId: string) {
   const winnerIndex = players.findIndex((player) => player.id === winnerId);
   const winningParity = winnerIndex % 2;
-  const unit = Math.min(5, Number((state.multiplier * 0.1).toFixed(1)));
   state.winnerIds = players.filter((_, index) => index % 2 === winningParity).map((player) => player.id);
-  state.scores = Object.fromEntries(players.map((player, index) => [player.id, index % 2 === winningParity ? unit : -unit]));
+  state.scores = calculateScores('doudizhu4', players.map((p) => p.id), state.winnerIds, state.multiplier, { variant: 'team' });
   state.phase = 'finished';
   state.message = `${winningParity === 0 ? '蓝队' : '橙队'}获胜`;
 }
@@ -111,7 +108,7 @@ export const doudizhu4: GameModule = {
     state.hands[playerId] = remaining;
     state.current = { playerId, cards: chosen, combo };
     state.passes = 0;
-    if (combo.kind === 'bomb' || combo.kind === 'rocket') state.multiplier = Math.min(256, state.multiplier * 2);
+    if (combo.kind === 'bomb' || combo.kind === 'rocket' || combo.kind === 'heavenly') state.multiplier = Math.min(256, state.multiplier * 2);
     if (!remaining.length) {
       if (state.variant === 'team') return finishTeam(state, players, playerId);
       state.rankings.push(playerId);

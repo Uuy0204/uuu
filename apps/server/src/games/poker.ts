@@ -72,7 +72,7 @@ function settle(state: PokerState, players: Player[], contenders: string[]) {
     const amount = (level - previous) * contributors.length;
     const eligible = contenders.filter((id) => state.contributions[id]! >= level);
     const winners = rank(eligible);
-    if (amount > 0 && !winners.length) {
+    if (amount > 0 && (contributors.length === 1 || !winners.length)) {
       const refund = level - previous;
       contributors.forEach((player) => { state.stacks[player.id]! += refund; });
       state.pot -= amount;
@@ -85,7 +85,7 @@ function settle(state: PokerState, players: Player[], contenders: string[]) {
       const remainder = amount - share * winners.length;
       winners.forEach((id, index) => {
         allWinners.add(id);
-        state.stacks[id] = (state.stacks[id] ?? 0) + share + (index === 0 ? remainder : 0);
+        state.stacks[id] = (state.stacks[id] ?? 0) + share + (index < remainder ? 1 : 0);
       });
     }
     previous = level;
@@ -101,6 +101,13 @@ function advanceStreet(state: PokerState, players: Player[]): 'none' | 'street' 
   const active = players.filter((p) => !state.folded.includes(p.id));
   if (active.length === 1) { settle(state, players, active.map((p) => p.id)); return 'finished'; }
   const ableToBet = active.filter((player) => state.stacks[player.id]! > 0);
+  // No further betting is possible once everyone is all-in, or the sole
+  // funded player has matched the other contributions. Blind all-ins stay in.
+  if (ableToBet.length <= 1 && ableToBet.every((p) => state.bets[p.id]! >= state.currentBet)) {
+    state.community.push(...state.drawPile.splice(0, 5 - state.community.length));
+    settle(state, players, active.map((p) => p.id));
+    return 'finished';
+  }
   const allActed = ableToBet.every((p) => state.acted.includes(p.id) && state.bets[p.id] === state.currentBet);
   if (!allActed) return 'none';
   state.acted = [];
@@ -135,14 +142,18 @@ export const poker: GameModule = {
       return [p.id, Number.isSafeInteger(value) && value !== undefined && value >= 0 ? value : 1000];
     }));
     const startingStacks = { ...stacks };
+    if (Object.values(startingStacks).filter((value) => value > 0).length < 2) throw new Error('至少两位玩家有筹码才能开局');
     const eligible = (index: number) => stacks[players[index]!.id]! > 0;
-    let dealer = Number(options?.dealer ?? 0) % players.length;
-    while (!eligible(dealer)) dealer = (dealer + 1) % players.length;
+    const requestedDealer = Number(options?.dealer ?? 0);
+    let dealer = Number.isInteger(requestedDealer) ? ((requestedDealer % players.length) + players.length) % players.length : 0;
     const nextEligible = (from: number) => {
-      let index = from;
-      do { index = (index + 1) % players.length; } while (!eligible(index));
-      return index;
+      for (let offset = 1; offset <= players.length; offset += 1) {
+        const index = (from + offset) % players.length;
+        if (eligible(index)) return index;
+      }
+      return -1;
     };
+    if (!eligible(dealer)) dealer = nextEligible(dealer);
     const smallBlindIndex = Object.values(stacks).filter((n) => n > 0).length === 2 ? dealer : nextEligible(dealer);
     const bigBlindIndex = nextEligible(smallBlindIndex);
     const bets = Object.fromEntries(players.map((p) => [p.id, 0]));
@@ -156,14 +167,17 @@ export const poker: GameModule = {
     const smallBlind = postBlind(smallBlindIndex, 10);
     const bigBlind = postBlind(bigBlindIndex, 20);
     const firstTurn = nextEligible(bigBlindIndex);
-    return {
-      gameId: 'poker', phase: 'preflop', turn: firstTurn, hands, drawPile: pile, community: [], pot: smallBlind + bigBlind,
-      stacks, startingStacks, bets, contributions, folded: players.filter((p) => !stacks[p.id]).map((p) => p.id), acted: [], currentBet: bigBlind, dealer, pots: [],
-      message: `盲注 10/20，${players[firstTurn]!.name} 行动`,
+    const state: PokerState = {
+      gameId: 'poker', phase: 'preflop', turn: firstTurn >= 0 ? firstTurn : dealer, hands, drawPile: pile, community: [], pot: smallBlind + bigBlind,
+      stacks, startingStacks, bets, contributions, folded: players.filter((p) => startingStacks[p.id] === 0).map((p) => p.id), acted: [], currentBet: Math.max(smallBlind, bigBlind), dealer, pots: [],
+      message: `盲注 10/20，${players[firstTurn >= 0 ? firstTurn : dealer]!.name} 行动`,
     } satisfies PokerState;
+    advanceStreet(state, players);
+    return state;
   },
   action(base, players, playerId, action) {
     const state = base as PokerState;
+    if (state.phase === 'finished') throw new Error('本局已经结束');
     if (players[state.turn]?.id !== playerId) throw new Error('还没轮到你');
     if (state.folded.includes(playerId) || state.stacks[playerId] === 0) throw new Error('当前玩家不能继续下注');
     if (action.type === 'fold') state.folded.push(playerId);

@@ -1,6 +1,9 @@
 import nextConfig from 'eslint-config-next';
 import eslintConfigPrettier from 'eslint-config-prettier';
 import tseslint from 'typescript-eslint';
+import { createRequire } from 'node:module';
+
+const webRequire = createRequire(new URL('./apps/web/package.json', import.meta.url));
 
 // Deterministic engine code: no wall-clock, no Math.random.
 const engineFiles = ['packages/engine/src/**/*.ts', 'packages/*/src/**/*.ts'];
@@ -22,6 +25,14 @@ const eslintConfig = [
   },
 
   ...nextConfig,
+
+  {
+    settings: { react: { version: '19.2' }, next: { rootDir: 'apps/web/' } },
+  },
+  {
+    files: ['apps/web/**/*.js', 'apps/web/**/*.mjs'],
+    languageOptions: { parserOptions: { babelOptions: { presets: [webRequire.resolve('next/babel')] } } },
+  },
 
   {
     files: ['**/*.ts', '**/*.tsx'],

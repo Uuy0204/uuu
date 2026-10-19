@@ -4,6 +4,18 @@ import type { Room } from './types.js';
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.resetModules(); });
 
 describe('房间快照', () => {
+  it('存储写入失败时报告异常，恢复成功后再标记已保存', async () => {
+    vi.stubEnv('UPSTASH_REDIS_REST_URL', 'https://example.test');
+    vi.stubEnv('UPSTASH_REDIS_REST_TOKEN', 'test-token');
+    const request = vi.fn().mockResolvedValueOnce(new Response('', { status: 503 })).mockResolvedValueOnce(Response.json({ result: 'OK' }));
+    vi.stubGlobal('fetch', request);
+    const { saveRooms, storageStatus } = await import('./room-store.js');
+    await expect(saveRooms([])).rejects.toThrow('503');
+    expect(storageStatus.healthy).toBe(false);
+    await saveRooms([]);
+    expect(storageStatus.healthy).toBe(true);
+    expect(storageStatus.lastSavedAt).toBeGreaterThan(0);
+  });
   it('按顺序写入可恢复完整局面，凭据只传给服务端存储', async () => {
     vi.stubEnv('UPSTASH_REDIS_REST_URL', 'https://example.test');
     vi.stubEnv('UPSTASH_REDIS_REST_TOKEN', 'test-token');

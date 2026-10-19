@@ -1,9 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { createOfflinePoker, nextPokerHand, pokerAction, pokerPot, pokerPots, settlePoker, type OfflinePokerState } from './offlinePoker';
+import { createOfflinePoker, nextPokerHand, pokerAction, pokerPot, pokerPots, settlePoker, startPokerHand, type OfflinePokerState } from './offlinePoker';
 
 const players = [{ id: 'a', name: '甲' }, { id: 'b', name: '乙' }];
 
 describe('线下德州虚拟筹码', () => {
+  it('盲注全押时保留资格，等待实体公共牌并可正常结算', () => {
+    const game = startPokerHand(players.map((p, i) => ({ ...p, stack: i ? 20 : 10, contributed: 0, bet: 0, folded: false, acted: false })), 0);
+    expect(game.current).toBe(-1);
+    expect(game.seats.every((seat) => !seat.folded)).toBe(true);
+    expect(pokerPot(game)).toBe(30);
+  });
+  it('重复赢家不能导致筹码被重复分配', () => {
+    const game = createOfflinePoker(players, 0);
+    const showdown = { ...game, street: 'showdown' as const };
+    expect(settlePoker(showdown, [['a', 'a'], ['b']])).toBe(showdown);
+  });
   it('自动扣盲注，并在一轮下注完成后进入下一街', () => {
     let game = createOfflinePoker(players, 0);
     expect(game.seats.map((seat) => seat.stack)).toEqual([990, 980]);

@@ -1,6 +1,7 @@
 import type { BaseGame, Card, GameModule, Player } from '../types.js';
 import { baseView, dealRoundRobin, deck, nextActive, removeCards, shuffle, sortCards } from './cards.js';
 import { beats, classify, findBotPlay, type Combo } from './doudizhu-common.js';
+import { calculateScores } from './scoring.js';
 
 interface Ddz3State extends BaseGame {
   gameId: 'doudizhu3';
@@ -23,13 +24,8 @@ function finish(state: Ddz3State, players: Player[], winnerId: string) {
   const landlordPlays = state.plays[state.landlordId!] ?? 0;
   const farmerPlays = players.filter((p) => p.id !== state.landlordId).reduce((sum, p) => sum + (state.plays[p.id] ?? 0), 0);
   if ((landlordWon && farmerPlays === 0) || (!landlordWon && landlordPlays === 1)) state.multiplier = Math.min(256, state.multiplier * 2);
-  const unit = Math.min(5, Number((state.multiplier * 0.1).toFixed(1)));
-  state.scores = {};
-  for (const player of players) {
-    const value = player.id === state.landlordId ? unit * 2 : unit;
-    state.scores[player.id] = Number((value * ((player.id === state.landlordId) === landlordWon ? 1 : -1)).toFixed(1));
-  }
   state.winnerIds = landlordWon ? [state.landlordId!] : players.filter((player) => player.id !== state.landlordId).map((player) => player.id);
+  state.scores = calculateScores('doudizhu3', players.map((p) => p.id), state.winnerIds, state.multiplier, { landlordId: state.landlordId! });
   state.phase = 'finished';
   state.message = `${players.find((p) => p.id === winnerId)?.name ?? '玩家'} 获胜`;
 }

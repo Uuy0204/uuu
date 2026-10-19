@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { ChevronLeft, CircleHelp, Minus, Plus, RotateCcw } from 'lucide-react';
 import { advancePokerStreet, createOfflinePoker, nextPokerHand, pokerAction, pokerPot, pokerPots, settlePoker, type OfflinePokerState } from './offlinePoker';
+import { Modal } from './Modal';
 
 interface Player { id: string; name: string; avatar: number; seat: number }
 export interface OfflinePokerSession {
@@ -10,13 +11,14 @@ export interface OfflinePokerSession {
   dealer: number; poker?: OfflinePokerState;
   undo?: { poker: OfflinePokerState; round: number; dealer: number; choices: string[][] };
   createdAt?: number; recordedRound?: number; startingStacks?: Record<string, number>;
+  potChoices?: string[][];
 }
 const labels = { preflop: '翻牌前', flop: '翻牌', turn: '转牌', river: '河牌', showdown: '摊牌结算', settled: '本局结束' };
 
 export function OfflinePokerTable({ initial, localPlayerId, onExit, onRecord }: { initial: OfflinePokerSession; localPlayerId: string; onExit: () => void; onRecord: (score: number, key: string) => void }) {
   const [session, setSession] = useState(() => ({ ...initial, poker: initial.poker ?? createOfflinePoker(initial.players, initial.dealer) }));
   const [raise, setRaise] = useState('20');
-  const [choices, setChoices] = useState<string[][]>([]);
+  const [choices, setChoices] = useState<string[][]>(initial.potChoices ?? []);
   const [showRules, setShowRules] = useState(false);
   const game = session.poker;
   const player = game.seats[game.current];
@@ -24,7 +26,7 @@ export function OfflinePokerTable({ initial, localPlayerId, onExit, onRecord }: 
   const raiseAmount = Number(raise);
   const canRaise = player && /^\d+$/.test(raise) && Number.isSafeInteger(raiseAmount) && raiseAmount >= 10 && call + raiseAmount <= player.stack;
   const pots = pokerPots(game);
-  useEffect(() => { localStorage.setItem('xy-offline-session', JSON.stringify(session)); }, [session]);
+  useEffect(() => { localStorage.setItem('xy-offline-session', JSON.stringify({ ...session, potChoices: choices })); }, [session, choices]);
 
   const changeGame = (next: (value: typeof session) => typeof session) => setSession((value) => {
     const updated = next(value);
@@ -77,7 +79,7 @@ export function OfflinePokerTable({ initial, localPlayerId, onExit, onRecord }: 
   }));
 
   return <main className="offline-shell theme-poker">
-    <header className="room-header"><button className="icon-button light" onClick={() => { localStorage.setItem('xy-offline-session', JSON.stringify(session)); onExit(); }} aria-label="返回首页并保存牌局"><ChevronLeft /></button><div><strong>德州扑克</strong><span className="offline-badge">实体牌 · 手机记筹码</span></div><div className="offline-round">第 {session.round} / {session.matchRounds} 局</div><button className="icon-button light offline-undo" disabled={!session.undo || session.completed} onClick={undo} aria-label="撤销上一步">撤销上一步</button><button className="icon-button light" onClick={() => setShowRules(true)} aria-label="线下德州说明"><CircleHelp /></button></header>
+    <header className="room-header"><button className="icon-button light" onClick={() => { localStorage.setItem('xy-offline-session', JSON.stringify({ ...session, potChoices: choices })); onExit(); }} aria-label="返回首页并保存牌局"><ChevronLeft /></button><div><strong>德州扑克</strong><span className="offline-badge">实体牌 · 手机记筹码</span></div><div className="offline-round">第 {session.round} / {session.matchRounds} 局</div><button className="icon-button light offline-undo" disabled={!session.undo || session.completed} onClick={undo} aria-label="撤销上一步">撤销上一步</button><button className="icon-button light" onClick={() => setShowRules(true)} aria-label="线下德州说明"><CircleHelp /></button></header>
     <section className="offline-poker">
       <div className="offline-poker-summary"><span>当前阶段 <b>{labels[game.street]}</b></span><span>底池 <b>{pokerPot(game)}</b></span><span>当前注 <b>{game.currentBet}</b></span></div>
       <p className="offline-poker-help">用实体纸牌发每人 2 张底牌，依次翻开 3 张、1 张、1 张公共牌。这里只管理虚拟筹码；每步自动保存，刷新可恢复。返回首页后可继续。</p>
@@ -90,6 +92,6 @@ export function OfflinePokerTable({ initial, localPlayerId, onExit, onRecord }: 
       {!session.completed && game.street === 'showdown' && <div className="offline-poker-controls"><h2>实体牌摊牌</h2><p>比较牌型，为每个底池选择获胜者；平手可选多人平分。</p>{pots.map((pot, index) => <fieldset className="offline-pot-choice" key={index}><legend>{index ? `边池 ${index}` : '主池'} · {pot.amount} 筹码</legend>{pot.eligible.map((id) => <label key={id}><input type="checkbox" checked={pot.eligible.length === 1 || Boolean(choices[index]?.includes(id))} disabled={pot.eligible.length === 1} onChange={() => toggleWinner(index, id)} />{game.seats.find((seat) => seat.id === id)?.name}</label>)}</fieldset>)}<button className="primary-button" disabled={pots.some((pot, index) => pot.eligible.length > 1 && !choices[index]?.length)} onClick={settle}>确认分配底池</button></div>}
       {game.street === 'settled' && <div className="offline-poker-controls offline-poker-settlement"><span className="settlement-kicker">第 {session.round} / {session.matchRounds} 局 · 结算</span><h2>{session.completed ? '本轮完成' : '本局结算'}</h2><p>{game.winners.length ? `获胜：${game.winners.map((id) => game.seats.find((seat) => seat.id === id)?.name).join('、')}` : '筹码不足两人，牌局结束'}。筹码已计入各玩家余额。</p><div className="offline-poker-results">{game.seats.map((seat) => { const change = seat.stack - (session.startingStacks?.[seat.id] ?? 1000); return <span key={seat.id}><strong>{seat.name}</strong><small>剩余 {seat.stack} 筹码</small><b className={change >= 0 ? 'positive' : 'negative'}>本局 {change > 0 ? '+' : ''}{change}</b></span>; })}</div>{!session.completed && <button className="primary-button" onClick={nextHand}><RotateCcw size={17} />{session.round >= session.matchRounds || game.seats.filter((seat) => seat.stack > 0).length < 2 ? '查看本轮总成绩' : '下一局 · 庄家轮换'}</button>}</div>}
     </section>
-    {showRules && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowRules(false)}><section className="modal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}><header><h2>线下德州怎么用</h2><button className="icon-button" onClick={() => setShowRules(false)} aria-label="关闭">×</button></header><p>每人初始 1000 娱乐筹码；庄家轮换，小盲 10、大盲 20 自动扣除。请用实体牌发牌，依屏幕阶段操作下注。摊牌时在每个底池勾选赢家，平手勾选多人；手机自动分配筹码。这里不生成或记录纸牌。</p></section></div>}
+    {showRules && <Modal title="线下德州怎么用" onClose={() => setShowRules(false)}><p className="modal-copy">每人初始 1000 娱乐筹码；庄家轮换，小盲 10、大盲 20 自动扣除。请用实体牌发牌，依屏幕阶段操作下注。摊牌时为每个底池勾选赢家，平手勾选多人；筹码自动分配。操作与赢家选择保存在本机，返回首页后可继续。</p></Modal>}
   </main>;
 }

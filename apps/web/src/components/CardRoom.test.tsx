@@ -16,7 +16,7 @@ const { socketMock } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('@/lib/socket', () => ({ socket: socketMock }));
+vi.mock('@/lib/socket', () => ({ socket: socketMock, serverUrl: 'http://localhost:3001' }));
 
 function buttonWith(container: HTMLElement, text: string) {
   return [...container.querySelectorAll<HTMLButtonElement>('button')].find((item) => item.textContent?.includes(text));
@@ -58,6 +58,7 @@ describe('创建房间', () => {
   let root: Root;
 
   beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ durableRooms: false, storage: { mode: 'memory' } })));
     localStorage.clear();
     sessionStorage.clear();
     container = document.createElement('div');
@@ -85,6 +86,64 @@ describe('创建房间', () => {
     await act(async () => root.unmount());
     container.remove();
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
+    window.history.replaceState({}, '', '/');
+  });
+
+  it('邀请链接预填房间号，保留手动加入确认', async () => {
+    window.history.replaceState({}, '', '/?room=654321');
+    await act(async () => root.render(<CardRoom />));
+    expect(container.querySelector<HTMLInputElement>('[aria-label="六位房间号"]')!.value).toBe('654321');
+    expect(socketMock.emitWithAck).not.toHaveBeenCalled();
+  });
+
+  it('四人线下自动计算8倍等额积分，可撤销并返回后继续', async () => {
+    await act(async () => root.render(<CardRoom />));
+    await act(async () => buttonWith(container, '四人斗地主')!.click());
+    await act(async () => buttonWith(container, '开始游戏')!.click());
+    await act(async () => buttonWith(container, '实体牌记分')!.click());
+    await act(async () => buttonWith(container, '进入实体牌记分器')!.click());
+    const input = container.querySelector<HTMLInputElement>('[aria-label="线下最终倍率"]')!;
+    const winner = container.querySelector<HTMLSelectElement>('[aria-label="本局赢家"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '8');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      winner.value = localStorage.getItem('xy-player-id')!;
+      winner.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await act(async () => buttonWith(container, '应用本局积分')!.click());
+    expect([...container.querySelectorAll('.score-stepper b')].map((el) => el.textContent)).toEqual(['+2.4', '-0.8', '-0.8', '-0.8']);
+    await act(async () => buttonWith(container, '撤销本局上一步')!.click());
+    expect([...container.querySelectorAll('.score-stepper b')].every((el) => el.textContent === '0.0')).toBe(true);
+    await act(async () => buttonWith(container, '应用本局积分')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="返回首页并保存牌局"]')!.click());
+    expect(container.textContent).toContain('继续线下牌局');
+    await act(async () => buttonWith(container, '继续线下牌局')!.click());
+    expect(container.querySelector('.score-stepper b')!.textContent).toBe('+2.4');
+  });
+
+  it('手动记分未平衡时不能提交下一局', async () => {
+    await act(async () => root.render(<CardRoom />));
+    await act(async () => buttonWith(container, '开始游戏')!.click());
+    await act(async () => buttonWith(container, '实体牌记分')!.click());
+    await act(async () => buttonWith(container, '进入实体牌记分器')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('.score-stepper button:last-child')!.click());
+    await act(async () => buttonWith(container, '记录并下一局')!.click());
+    expect(container.textContent).toContain('积分合计必须为 0');
+    expect(container.querySelector('.offline-round')!.textContent).toContain('第 1');
+  });
+
+  it('战绩将德州筹码、钓鱼牌堆分与娱乐积分分开', async () => {
+    localStorage.setItem('xy-history', JSON.stringify([
+      { key: '1', gameId: 'doudizhu3', score: 0.8, result: '胜', at: 1 },
+      { key: '2', gameId: 'poker', score: 200, result: '胜', at: 2 },
+      { key: '3', gameId: 'fishing', score: 50, result: '胜', at: 3 },
+    ]));
+    await act(async () => root.render(<CardRoom />));
+    await act(async () => buttonWith(container, '我的战绩')!.click());
+    expect(container.querySelector('.history-total strong')!.textContent).toBe('+0.8');
+    expect(container.querySelector('.history-units')!.textContent).toContain('+200');
+    expect(container.querySelector('.history-units')!.textContent).toContain('50');
   });
 
   it('空昵称也会生成游客昵称并进入等待大厅', async () => {
@@ -121,7 +180,7 @@ describe('创建房间', () => {
     await act(async () => buttonWith(container, '线上模式')!.click());
     const create = buttonWith(container, '创建线上房间')!;
     await act(async () => create.click());
-    expect(container.textContent).toContain('无法连接房间服务');
+    expect(container.textContent).toContain('操作结果未确认');
     expect(create.disabled).toBe(false);
   });
 

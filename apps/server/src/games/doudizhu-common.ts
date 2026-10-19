@@ -73,7 +73,9 @@ export function findBotPlay(hand: Card[], previous: Combo | null, allowed?: Comb
     for (let size = 5; size <= Math.min(8, group.length); size += 1) candidates.push(group.slice(0, size));
   }
   const jokers = sorted.filter((card) => card.suit === 'J');
-  if (jokers.length >= 2) candidates.push(jokers.slice(0, 2));
+  const smallJoker = jokers.find((card) => card.rank === '小王');
+  const bigJoker = jokers.find((card) => card.rank === '大王');
+  if (smallJoker && bigJoker) candidates.push([smallJoker, bigJoker]);
   if (jokers.length >= 4) candidates.push(jokers.slice(0, 4));
   const ranks = [...byRank.keys()].filter((value) => value < 15).sort((a, b) => a - b);
   const addRuns = (copies: number, minRanks: number, targetKind: ComboKind) => {
