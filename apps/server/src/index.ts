@@ -134,7 +134,8 @@ function armTurnTimer(room: Room) {
 
 function fail(ack: ((value: unknown) => void) | undefined, error: unknown) {
   const message = error instanceof Error ? error.message : '操作失败';
-  ack?.({ ok: false, error: message });
+  const errorCode = error instanceof Error && 'code' in error ? error.code : undefined;
+  ack?.({ ok: false, error: message, errorCode });
 }
 
 function joinSocket(socket: Socket, room: Room, playerId: string) {
@@ -249,13 +250,13 @@ io.on('connection', (socket) => {
       limited('join', 15, 10_000);
       const code = String(payload.code ?? '').trim();
       const room = rooms.get(code);
-      if (!room) throw new Error('没有找到这个房间');
+      if (!room) throw Object.assign(new Error('没有找到这个房间'), { code: 'ROOM_NOT_FOUND' });
       const incoming = playerFrom(payload);
-      if (room.blockedPlayerIds?.includes(incoming.id)) throw new Error('你已被移出这个房间，请联系房主');
+      if (room.blockedPlayerIds?.includes(incoming.id)) throw Object.assign(new Error('你已被移出这个房间，请联系房主'), { code: 'ROOM_REMOVED' });
       if (socket.data.roomCode && (socket.data.roomCode !== code || socket.data.playerId !== incoming.id)) leaveCurrentRoom(socket, true);
       const existing = room.players.find((p) => p.id === incoming.id);
       if (existing) {
-        if (existing.reconnectSecret !== incoming.reconnectSecret) throw new Error('该座位属于另一位玩家');
+        if (existing.reconnectSecret !== incoming.reconnectSecret) throw Object.assign(new Error('该座位属于另一位玩家'), { code: 'IDENTITY_MISMATCH' });
         const disconnectKey = `${room.code}:${incoming.id}`;
         const timer = disconnectTimers.get(disconnectKey);
         if (timer) clearTimeout(timer);
