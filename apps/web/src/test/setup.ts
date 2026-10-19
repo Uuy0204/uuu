@@ -1,3 +1,5 @@
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-window.scrollTo = () => undefined;
-Element.prototype.scrollIntoView = () => undefined;
+if (typeof window !== 'undefined') {
+  window.scrollTo = () => undefined;
+  Element.prototype.scrollIntoView = () => undefined;
+}

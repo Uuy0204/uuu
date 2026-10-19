@@ -7,34 +7,48 @@ import { fileURLToPath } from 'node:url';
 import { Server, type Socket } from 'socket.io';
 import { games, gameNames } from './games/index.js';
 import type { ClientRoom, GameAction, GameId, Player, Room } from './types.js';
-import { durableRooms, loadRooms, saveRooms } from './room-store.js';
+import { durableRooms, loadRooms, saveRooms, storageStatus } from './room-store.js';
 import { shouldEvictRoom } from './room-lifecycle.js';
 
 const PORT = Number(process.env.PORT ?? 3001);
-const origins = process.env.CLIENT_ORIGIN?.split(',').map((origin) => origin.trim()).filter(Boolean);
+const origins = (process.env.CLIENT_ORIGIN ?? process.env.RENDER_EXTERNAL_URL)?.split(',').map((origin) => origin.trim()).filter(Boolean);
 const corsOrigin = origins?.length ? origins : true;
 const app = express();
 app.use(cors({ origin: corsOrigin }));
-app.get('/health', (_req, res) => res.json({ ok: true, name: '小赌怡情', rooms: rooms.size, durableRooms }));
+app.get('/health', (_req, res) => res.json({ ok: true, name: '小赌怡情', rooms: rooms.size, durableRooms: durableRooms && storageStatus.healthy, storage: storageStatus, version: process.env.RENDER_GIT_COMMIT ?? process.env.APP_REVISION ?? 'local' }));
 app.get('/games', (_req, res) => res.json(gameNames));
 const publicDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../web/out');
 app.use(express.static(publicDir));
 app.get('/{*path}', (_req, res) => res.sendFile(resolve(publicDir, 'index.html')));
 
 const httpServer = createServer(app);
-const io = new Server(httpServer, { cors: { origin: corsOrigin } });
+const io = new Server(httpServer, { cors: { origin: corsOrigin }, maxHttpBufferSize: 64 * 1024,
+  allowRequest: (request, done) => done(null, !origins?.length || !request.headers.origin || origins.includes(request.headers.origin)),
+});
 const rooms = new Map<string, Room>();
 const roomTimers = new Map<string, NodeJS.Timeout>();
 const disconnectTimers = new Map<string, NodeJS.Timeout>();
 const TURN_MS = 30_000;
 const LIARS_CHALLENGE_PAUSE_MS = 6_000;
 const LIARS_REVEAL_PAUSE_MS = 1_800;
-let pendingSnapshot: Promise<void> = Promise.resolve();
+let snapshotTimer: NodeJS.Timeout | undefined;
+let saving = false;
+let dirty = false;
 function snapshot() {
   if (!durableRooms) return;
-  const data = [...rooms.values()];
-  pendingSnapshot = pendingSnapshot.catch(() => {}).then(() => saveRooms(data));
-  void pendingSnapshot.catch((error) => console.error('房间持久化失败', error));
+  dirty = true;
+  if (snapshotTimer || saving) return;
+  snapshotTimer = setTimeout(() => { snapshotTimer = undefined; void flushSnapshot(); }, 250);
+}
+async function flushSnapshot() {
+  if (saving || !dirty) return;
+  saving = true; dirty = false;
+  try { await saveRooms(structuredClone([...rooms.values()])); }
+  catch (error) { dirty = true; console.error('房间持久化失败', error); }
+  finally {
+    saving = false;
+    if (dirty && !snapshotTimer) snapshotTimer = setTimeout(() => { snapshotTimer = undefined; void flushSnapshot(); }, storageStatus.healthy ? 250 : 5000);
+  }
 }
 
 function liarsBotDelay(room: Room): number {
@@ -73,7 +87,8 @@ function availableSeat(room: Room): number {
 }
 
 function clientRoom(room: Room, playerId: string): ClientRoom {
-  return { ...room, players: room.players.map(({ reconnectSecret: _secret, ...player }) => player), game: room.game ? games[room.gameId].view(room.game, playerId) : null };
+  const { blockedPlayerIds: _blocked, ...publicRoom } = room;
+  return { ...publicRoom, players: room.players.map(({ reconnectSecret: _secret, ...player }) => player), game: room.game ? games[room.gameId].view(room.game, playerId) : null };
 }
 
 function emitRoom(room: Room) {
@@ -92,7 +107,7 @@ function clearRoomTimer(code: string) {
 
 function armTurnTimer(room: Room) {
   clearRoomTimer(room.code);
-  if (!room.game || room.status !== 'playing' || room.game.phase === 'finished') return;
+  if (!room.game || room.status !== 'playing' || room.game.phase === 'finished' || !room.players.some((p) => p.connected && !p.bot)) return;
   const duration = liarsBotDelay(room) || TURN_MS;
   const deadline = Date.now() + duration;
   room.game.turnDeadline = deadline;
@@ -105,10 +120,14 @@ function armTurnTimer(room: Room) {
     const gameModule = games[current.gameId];
     const action = gameModule.botAction(current.game, current.players, player.id);
     if (action) {
-      gameModule.action(current.game, current.players, player.id, action);
-      runBots(current);
-      armTurnTimer(current);
-      emitRoom(current);
+      try {
+        gameModule.action(current.game, current.players, player.id, action);
+        runBots(current);
+      } catch (error) {
+        console.error('自动行动失败', current.code, error);
+        current.game.message = '自动行动暂未完成，请当前玩家手动操作';
+      }
+      armTurnTimer(current); emitRoom(current);
     }
   }, duration));
 }
@@ -179,9 +198,18 @@ function runBots(room: Room) {
 }
 
 io.on('connection', (socket) => {
+  // Per-connection buckets bound accidental double taps and automated floods.
+  const windows = new Map<string, { at: number; count: number }>();
+  const limited = (key: string, limit: number, milliseconds = 1000) => {
+    const previous = windows.get(key);
+    const value = previous && Date.now() - previous.at < milliseconds ? previous : { at: Date.now(), count: 0 };
+    value.count += 1; windows.set(key, value);
+    if (value.count > limit) throw new Error('操作太快，请稍后再试');
+  };
   socket.on('room:create', (payload: Record<string, unknown>, ack?: (value: unknown) => void) => {
     try {
-      leaveCurrentRoom(socket, true);
+      limited('create', 4, 60_000);
+      if (rooms.size >= 500) throw new Error('当前房间较多，请稍后再创建');
       const player = playerFrom(payload);
       const gameId = String(payload.gameId) as GameId;
       if (!games[gameId]) throw new Error('请选择有效玩法');
@@ -208,6 +236,7 @@ io.on('connection', (socket) => {
         round: 0, matchScores: {}, scoredRound: 0, targetPlayers, options, createdAt: Date.now(),
         messages: [],
       };
+      leaveCurrentRoom(socket, true);
       rooms.set(room.code, room);
       joinSocket(socket, room, player.id);
       ack?.({ ok: true, room: clientRoom(room, player.id) });
@@ -217,10 +246,12 @@ io.on('connection', (socket) => {
 
   socket.on('room:join', (payload: Record<string, unknown>, ack?: (value: unknown) => void) => {
     try {
+      limited('join', 15, 10_000);
       const code = String(payload.code ?? '').trim();
       const room = rooms.get(code);
       if (!room) throw new Error('没有找到这个房间');
       const incoming = playerFrom(payload);
+      if (room.blockedPlayerIds?.includes(incoming.id)) throw new Error('你已被移出这个房间，请联系房主');
       if (socket.data.roomCode && (socket.data.roomCode !== code || socket.data.playerId !== incoming.id)) leaveCurrentRoom(socket, true);
       const existing = room.players.find((p) => p.id === incoming.id);
       if (existing) {
@@ -240,7 +271,7 @@ io.on('connection', (socket) => {
       }
       joinSocket(socket, room, incoming.id);
       runBots(room);
-      armTurnTimer(room);
+      if (!roomTimers.has(room.code)) armTurnTimer(room);
       ack?.({ ok: true, room: clientRoom(room, incoming.id) });
       emitRoom(room);
     } catch (error) { fail(ack, error); }
@@ -251,9 +282,58 @@ io.on('connection', (socket) => {
       const room = rooms.get(socket.data.roomCode);
       if (!room || room.hostId !== socket.data.playerId) throw new Error('只有房主可以添加机器人');
       if (room.status !== 'lobby' || room.players.length >= room.targetPlayers) throw new Error('不能再添加玩家');
-      const number = room.players.filter((p) => p.bot).length + 1;
-      room.players.push({ id: `bot-${room.code}-${number}`, name: `牌友${number}`, avatar: number % 8, connected: true, bot: true, seat: availableSeat(room) });
+      const seat = availableSeat(room);
+      room.players.push({ id: `bot-${room.code}-${randomInt(100000, 1000000)}`, name: `牌友${seat + 1}`, avatar: (seat + 1) % 8, connected: true, bot: true, seat });
       ack?.({ ok: true }); emitRoom(room);
+    } catch (error) { fail(ack, error); }
+  });
+
+  socket.on('room:removePlayer', (payload: { playerId?: string }, ack?: (value: unknown) => void) => {
+    try {
+      const room = rooms.get(socket.data.roomCode);
+      if (!room || room.hostId !== socket.data.playerId) throw new Error('只有房主可以移除玩家');
+      if (room.status !== 'lobby') throw new Error('牌局开始后不能移除玩家');
+      const player = room.players.find((p) => p.id === payload.playerId);
+      if (!player || player.id === room.hostId) throw new Error('不能移除这个座位');
+      room.players = room.players.filter((p) => p.id !== player.id);
+      if (!player.bot) room.blockedPlayerIds = [...(room.blockedPlayerIds ?? []), player.id];
+      for (const peer of io.sockets.sockets.values()) if (peer.data.roomCode === room.code && peer.data.playerId === player.id) {
+        peer.emit('room:removed', { message: '房主已将你移出房间' });
+        void peer.leave(room.code); delete peer.data.roomCode; delete peer.data.playerId;
+      }
+      ack?.({ ok: true }); emitRoom(room);
+    } catch (error) { fail(ack, error); }
+  });
+
+  socket.on('room:configure', (payload: Record<string, unknown>, ack?: (value: unknown) => void) => {
+    try {
+      const room = rooms.get(socket.data.roomCode);
+      if (!room || room.hostId !== socket.data.playerId) throw new Error('只有房主可以修改设置');
+      if (room.status !== 'lobby') throw new Error('请在等待开局时修改设置');
+      const count = Number(payload.targetPlayers ?? room.targetPlayers);
+      const rounds = Number(payload.matchRounds ?? room.options.matchRounds);
+      if (!Number.isInteger(count) || count < games[room.gameId].minPlayers || count > games[room.gameId].maxPlayers || count < room.players.length) throw new Error('人数不能小于已入座人数或超出玩法范围');
+      if (!Number.isInteger(rounds) || rounds < 1 || rounds > 20) throw new Error('请设置1至20局');
+      if (room.gameId === 'liarsbar') {
+        const bullets = Number(payload.bulletCount ?? room.options.bulletCount);
+        if (!Number.isInteger(bullets) || bullets < 1 || bullets > 6) throw new Error('子弹数请选择1至6发');
+        room.options.bulletCount = bullets;
+      }
+      room.targetPlayers = count; room.options.matchRounds = rounds;
+      if (room.players.some((p) => (p.seat ?? 0) >= count)) room.players.sort((a, b) => (a.seat ?? 0) - (b.seat ?? 0)).forEach((p, index) => { p.seat = index; });
+      if (room.gameId === 'doudizhu4') room.options.variant = payload.variant === 'team' ? 'team' : 'solo';
+      ack?.({ ok: true }); emitRoom(room);
+    } catch (error) { fail(ack, error); }
+  });
+
+  socket.on('room:resetMatch', (_payload: unknown, ack?: (value: unknown) => void) => {
+    try {
+      const room = rooms.get(socket.data.roomCode);
+      if (!room || room.hostId !== socket.data.playerId) throw new Error('只有房主可以再开一轮');
+      if (room.status !== 'finished') throw new Error('请先完成当前牌局');
+      room.game = null; room.status = 'lobby'; room.round = 0; room.scoredRound = 0; room.matchScores = {};
+      delete room.options.startingStacks;
+      clearRoomTimer(room.code); ack?.({ ok: true }); emitRoom(room);
     } catch (error) { fail(ack, error); }
   });
 
@@ -272,7 +352,7 @@ io.on('connection', (socket) => {
           if (Object.values(stacks).filter((stack) => stack > 0).length < 2) throw new Error('只剩一人有筹码，本轮已结束');
           room.options.startingStacks = JSON.stringify(stacks);
         }
-        room.options.dealer = room.round % room.players.length;
+        room.options.dealer = room.game && 'dealer' in room.game ? (Number(room.game.dealer) + 1) % room.players.length : 0;
       }
       room.game = gameModule.create(room.players, room.options);
       room.round += 1;
@@ -288,6 +368,10 @@ io.on('connection', (socket) => {
 
   socket.on('game:action', (action: GameAction, ack?: (value: unknown) => void) => {
     try {
+      limited('action', 10);
+      if (!action || typeof action !== 'object' || typeof action.type !== 'string') throw new Error('无效操作');
+      if (action.type === 'double' && typeof action.value !== 'boolean') throw new Error('请选择加倍或不加倍');
+      if (action.type === 'play' && (!Array.isArray(action.cardIds) || action.cardIds.length > 108 || action.cardIds.some((id) => typeof id !== 'string'))) throw new Error('无效选牌');
       const room = rooms.get(socket.data.roomCode);
       if (!room?.game || room.status !== 'playing') throw new Error('牌局尚未开始');
       games[room.gameId].action(room.game, room.players, socket.data.playerId, action);
@@ -297,6 +381,7 @@ io.on('connection', (socket) => {
 
   socket.on('chat:send', (payload: Record<string, unknown>, ack?: (value: unknown) => void) => {
     try {
+      limited('chat', 5, 5000);
       const room = rooms.get(socket.data.roomCode);
       const player = room?.players.find((candidate) => candidate.id === socket.data.playerId);
       if (!room || !player) throw new Error('请先加入房间');
@@ -304,7 +389,8 @@ io.on('connection', (socket) => {
       if (!text) throw new Error('消息不能为空');
       room.messages.push({ id: `${Date.now()}-${randomInt(1000, 10000)}`, playerId: player.id, name: player.name.replace(/（托管）$/, ''), text, at: Date.now() });
       room.messages = room.messages.slice(-50);
-      ack?.({ ok: true }); emitRoom(room);
+      room.updatedAt = Date.now(); snapshot();
+      ack?.({ ok: true }); io.to(room.code).emit('room:messages', { code: room.code, messages: room.messages });
     } catch (error) { fail(ack, error); }
   });
 

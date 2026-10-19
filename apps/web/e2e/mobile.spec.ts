@@ -1,5 +1,48 @@
 import { expect, test } from '@playwright/test';
 
+test('四人线下自动计分、撤销与返回存档在窄屏可用', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('.game-choice').filter({ hasText: '四人斗地主' }).click();
+  await page.getByRole('button', { name: '开始游戏' }).click();
+  await page.getByRole('button', { name: /实体牌记分/ }).click();
+  await page.getByRole('button', { name: /进入实体牌记分器/ }).click();
+  await page.getByLabel('线下最终倍率').fill('8');
+  await page.getByLabel('本局赢家').selectOption({ index: 1 });
+  await page.getByRole('button', { name: '应用本局积分' }).click();
+  await expect(page.locator('.score-stepper b')).toHaveText(['+2.4', '-0.8', '-0.8', '-0.8']);
+  await page.getByRole('button', { name: '撤销本局上一步' }).click();
+  await expect(page.locator('.score-stepper b')).toHaveText(['0.0', '0.0', '0.0', '0.0']);
+  await page.getByRole('button', { name: '应用本局积分' }).click();
+  await page.getByRole('button', { name: '返回首页并保存牌局' }).click();
+  await page.locator('.mobile-resume').filter({ hasText: '继续已保存的线下牌局' }).click();
+  await page.reload();
+  await expect(page.locator('.score-stepper b')).toHaveText(['+2.4', '-0.8', '-0.8', '-0.8']);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test('房主在手机端管理机器人、设置并获取邀请链接', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('.game-choice').filter({ hasText: '德州扑克' }).click();
+  await page.getByRole('button', { name: '开始游戏' }).click();
+  await page.getByRole('button', { name: /线上模式/ }).click();
+  await page.getByRole('button', { name: '3', exact: true }).click();
+  await page.getByRole('button', { name: /创建线上房间/ }).click();
+  await page.getByRole('button', { name: '添加牌友' }).click();
+  await page.getByRole('button', { name: '房间管理', exact: true }).click();
+  await page.getByLabel('修改房间局数').fill('5');
+  await page.getByRole('button', { name: '保存房间设置' }).click();
+  await expect(page.locator('.lobby-meta')).toContainText('5 局');
+  await page.getByRole('button', { name: '房间管理', exact: true }).click();
+  page.once('dialog', (dialog) => void dialog.accept());
+  await page.getByRole('button', { name: '移除', exact: true }).click();
+  await expect(page.locator('.manage-player')).toHaveCount(1);
+  await page.getByRole('button', { name: '关闭' }).click();
+  await page.getByRole('button', { name: '邀请好友', exact: true }).click();
+  const code = (await page.locator('.room-code').innerText()).replace(/\D/g, '');
+  await expect(page.getByLabel('房间邀请链接')).toHaveValue(new RegExp(`\\?room=${code}$`));
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
 test('窄屏主页与德州线下操作、撤销和刷新恢复', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: '小赌怡情' })).toBeVisible();
@@ -15,7 +58,7 @@ test('窄屏主页与德州线下操作、撤销和刷新恢复', async ({ page 
   await page.reload();
   await expect(page.getByText('翻牌前', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '返回首页并保存牌局' }).click();
-  await page.locator('.mobile-resume').filter({ hasText: '继续已保存的线下德州' }).click();
+  await page.locator('.mobile-resume').filter({ hasText: '继续已保存的线下牌局' }).click();
   await expect(page.getByText('当前阶段')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });

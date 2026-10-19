@@ -1,6 +1,7 @@
 import type { BaseGame, Card, GameAction, GameModule, Player } from '../types.js';
 import { baseView, dealRoundRobin, deck, nextActive, removeCards, shuffle } from './cards.js';
 import { beats, classify, findBotPlay, type Combo, type ComboKind } from './doudizhu-common.js';
+import { calculateScores } from './scoring.js';
 
 interface ClimbingState extends BaseGame {
   gameId: 'paodekuai' | 'zhengshangyou';
@@ -19,8 +20,7 @@ function active(state: ClimbingState, players: Player[]) {
 function finish(state: ClimbingState, players: Player[]) {
   const last = players.find((p) => !state.rankings.includes(p.id));
   if (last) state.rankings.push(last.id);
-  const middle = (players.length - 1) / 2;
-  state.scores = Object.fromEntries(state.rankings.map((id, i) => [id, Number(((middle - i) * 0.2 * state.multiplier).toFixed(1))]));
+  state.scores = calculateScores(state.gameId, players.map((p) => p.id), [state.rankings[0]!], state.multiplier, { rankings: state.rankings });
   state.winnerIds = [state.rankings[0]!];
   state.phase = 'finished';
   state.message = `${players.find((p) => p.id === state.rankings[0])?.name} 最先出完`;

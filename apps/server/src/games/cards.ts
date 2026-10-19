@@ -46,9 +46,11 @@ export function removeCards(hand: Card[], ids: string[]): Card[] | null {
 }
 
 export function nextActive(turn: number, total: number, skipped: Set<number> = new Set()): number {
-  let next = turn;
-  do next = (next + 1) % total; while (skipped.has(next));
-  return next;
+  for (let offset = 1; offset <= total; offset += 1) {
+    const next = (turn + offset + total) % total;
+    if (!skipped.has(next)) return next;
+  }
+  return -1;
 }
 
 export function baseView<T extends { hands: Record<string, Card[]> }>(state: T, playerId: string) {

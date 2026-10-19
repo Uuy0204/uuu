@@ -1,13 +1,16 @@
 'use client';
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRight, Bot, ChevronLeft, CircleHelp, Clock3, Copy, Crosshair, DoorOpen, Eye, History, MessageCircle, Minus, Plus, RotateCcw, Settings, Sparkles, Users, Volume2, VolumeX, Wifi, Wine, X } from 'lucide-react';
-import { socket } from '@/lib/socket';
+import { ArrowRight, Bot, ChevronLeft, CircleHelp, Clock3, Copy, Crosshair, DoorOpen, Eye, History, MessageCircle, Minus, Plus, RotateCcw, Settings, Sparkles, Users, Volume2, VolumeX, Wifi, Wine } from 'lucide-react';
+import { socket, serverUrl } from '@/lib/socket';
 import { GAME_INFO, type Card, type ClientRoom, type GameId, type HistoryItem } from '@/lib/types';
 import { playCue } from '@/lib/sound';
 import { RevolverStage } from './RevolverStage';
-import { OfflinePokerTable } from './OfflinePokerTable';
+import { OfflinePokerTable, type OfflinePokerSession } from './OfflinePokerTable';
 import { createOfflinePoker, type OfflinePokerState } from './offlinePoker';
+import { Modal } from './Modal';
+import { RoomTools } from './RoomTools';
+import { OfflineScoreControls } from './OfflineScoreControls';
 
 const AVATARS = ['松', '竹', '梅', '兰', '云', '月', '山', '海'];
 const SUITS: Record<Card['suit'], string> = { S: '♠', H: '♥', C: '♣', D: '♦', J: '★' };
@@ -27,12 +30,12 @@ const RULES: Record<GameId, RuleContent> = {
     { title: '用牌与叫地主', items: ['每人 17 张，另留 3 张底牌。三人依次选择不叫、1 分、2 分或 3 分；后叫者只能提高分数，3 分立即结束竞叫，无人叫牌则重新发牌。', '最高叫分者成为地主，公开并获得底牌。两位农民随后依次选择是否加倍，地主完成加牌后首先出牌。'] },
     { title: '合法牌型', items: ['支持单张、对子、三张、三带一、三带二、五张起顺子、三对起连对、飞机、飞机带单、飞机带对、四带二、四带两对、四张炸弹和王炸。', '顺子、连对和飞机主体不得包含 2 或王。飞机按连续三张组数携带相同数量的单牌或对子。'] },
     { title: '跟牌与大小', items: ['领出时可出任意合法牌型；跟牌须同牌型、同长度且点数更大，也可选择不出。其余两人均不出后，最后出牌者重新领出。', '普通点数从大到小为大王、小王、2、A、K 至 3。王炸最大；炸弹可压普通牌，炸弹之间比较点数。'] },
-    { title: '胜负与计分', items: ['地主先出完则地主胜；任一农民先出完则两名农民共同获胜。炸弹或王炸使倍率翻倍，春天或反春再翻倍，倍率最高 256。', '基础分为倍率 × 0.1，单方最多按 5 分计；地主输赢两倍，两个农民各按一倍结算。'] },
+    { title: '胜负与计分', items: ['地主先出完则地主胜；任一农民先出完则两名农民共同获胜。炸弹或王炸使倍率翻倍，春天或反春再翻倍，倍率最高 256。', '每份积分为倍率 × 0.1，最高 10 分；地主输赢两份，两个农民各按一份结算。多份合计可超过 10 分。'] },
   ] },
   doudizhu4: { intro: '两副牌共 108 张，支持四人混战和对角 2 对 2 组队，两种模式均通过叫分争夺底牌。', sections: [
     { title: '发牌与夺底', items: ['每人发 25 张，余下 8 张为底牌。四人依次选择不叫、1 分、2 分或 3 分；最高叫分者获得底牌并先出，无人叫分则重新发牌。', '创建房间时可选择混战排名或对角组队。组队模式中座位 1、3 为蓝队，座位 2、4 为橙队。'] },
     { title: '牌型与跟牌', items: ['基础牌型包含单张、对子、三张、带牌、顺子、连对和飞机；四至八张同点数牌均为炸弹，四张王组成最大的天王炸弹。', '普通牌型必须同型同长度比较。炸弹先比较张数，张数相同再比较点数；天王炸弹最大。'] },
-    { title: '胜负与计分', items: ['混战模式按出完先后继续排定四个名次，使用 +3、0、-1、-2 权重结算。组队模式中任一队员先出完，该队立即获胜并共同结算。', '炸弹、王炸或天王炸弹使倍率翻倍，倍率最高 256。'] },
+    { title: '胜负与计分', items: ['混战继续排定名次，第一名获得每位对手相同的一份积分，其余三人各扣一份；每份为倍率 × 0.1，最高 10。组队中任一队员先出完即全队获胜，两名赢家各加一份，两名输家各扣一份。', '炸弹、王炸或天王炸弹使倍率翻倍，倍率最高 256。'] },
   ] },
   poker: { intro: '每人 2 张私有底牌，结合 5 张公共牌组成最佳五张牌型，通过四轮行动争夺底池。', sections: [
     { title: '开局与行动', items: ['每位玩家初始 1000 娱乐筹码，下一局沿用上一局余额；筹码耗尽的玩家离桌。庄家每局顺时针轮换；小盲 10、大盲 20，二人局中庄家同时支付小盲。', '翻牌前、翻牌、转牌、河牌共四轮行动，可弃牌、过牌、跟注、加注或全押；仍可行动的玩家都完成行动且投入相同后进入下一街。'] },
@@ -42,12 +45,12 @@ const RULES: Record<GameId, RuleContent> = {
   paodekuai: { intro: '三至四人的争先排名玩法，去掉大小王，有牌必出，持黑桃 3 的玩家率先行动。', sections: [
     { title: '用牌与首出', items: ['使用去掉大小王的 52 张牌。三人局每人 16 张，随机留出 4 张不用；四人局每人 13 张。', '持有黑桃 3 的玩家先出，首手牌必须包含黑桃 3。'] },
     { title: '牌型与跟牌', items: ['支持单张、对子、三张、三带一、顺子、连对、飞机、飞机带单和四张炸弹。2 不得进入顺子、连对或飞机主体。', '跟牌须同型同长度且更大；如果系统能找到可压制组合，就不能选择“要不起”。其他玩家均无法跟牌后，最后出牌者重新领出。'] },
-    { title: '排名与积分', items: ['玩家出完即获得当前名次，其余玩家继续直至全部排定。三人局基础权重为 +0.2、0、-0.2；四人局为 +0.3、+0.1、-0.1、-0.3。', '每次炸弹使本局倍率翻倍，并作用于最终排名积分。'] },
+    { title: '排名与积分', items: ['玩家出完即获得当前名次，其余玩家继续直至全部排定。三人局基础权重为 +0.2、0、-0.2；四人局为 +0.3、+0.1、-0.1、-0.3。', '每次炸弹使本局倍率翻倍，最高 256；最终排名积分每人绝对值封顶 10，保持零和。'] },
   ] },
   zhengshangyou: { intro: '三至四人使用完整 54 张牌争取先出完，包含大小王，并允许策略性过牌。', sections: [
     { title: '发牌与首出', items: ['整副 54 张牌全部依次发给玩家。三人局每人 18 张；四人局前两位各 14 张，后两位各 13 张。', '持黑桃 3 的玩家先出，首手牌必须包含黑桃 3。'] },
     { title: '牌型与跟牌', items: ['支持单张、对子、三张、三带一、三带二、顺子、连对、飞机、飞机带单、飞机带对、四带二、四带两对、炸弹和王炸。2 和王不进入顺子、连对或飞机主体。', '跟牌须同型同长度且更大，炸弹可压普通牌，王炸可压炸弹。即使有牌可压，也可以选择不出；其他在场玩家都过牌后，由上一手出牌者重新领出。'] },
-    { title: '名次与积分', items: ['玩家出完牌即获得名次，其余玩家继续直到名次排定。三人局基础积分依次为 +0.2、0、-0.2；四人局为 +0.3、+0.1、-0.1、-0.3。', '每次炸弹使本局倍率翻倍，最高 256 倍，作用于最终排名积分；王炸不另加倍。'] },
+    { title: '名次与积分', items: ['玩家出完牌即获得名次，其余玩家继续直到名次排定。三人局基础积分依次为 +0.2、0、-0.2；四人局为 +0.3、+0.1、-0.1、-0.3。', '每次炸弹使本局倍率翻倍，最高 256 倍，作用于最终排名积分，每人绝对值封顶 10；王炸不另加倍。'] },
   ] },
   fishing: { intro: '两至四人轮流翻出牌堆顶牌，通过匹配相同点数收走中间的全部牌，适合轻松聚会。', sections: [
     { title: '发牌与回合', items: ['一副 54 张牌平均分给所有玩家，牌面朝下叠成个人牌堆，任何人都不能提前查看。', '玩家顺时针翻出自己牌堆顶部一张，正面朝上放到中央牌列末端。'] },
@@ -71,8 +74,8 @@ const RULE_EXAMPLES: Record<GameId, { title: string; text: string }> = {
   liarsbar: { title: '质疑示例', text: '目标牌为 A 时，打出 A 与鬼牌均算真牌；只要暗牌里有一张 K 或 Q，质疑成功，出牌者承担轮盘结果。' },
 };
 const SCORE_NOTES: Record<GameId, string> = {
-  doudizhu3: '积分按叫分、加倍、炸弹与春天形成的倍率计算；基础分最多 5 分，地主按两倍结算。',
-  doudizhu4: '混战按四个名次与倍率结算；组队时胜队每人加分，负队每人扣同等分数。',
+  doudizhu3: '积分按叫分、加倍、炸弹与春天形成的倍率计算；每份积分最多 10 分，地主结算两份，农民各一份。',
+  doudizhu4: '混战三位输家各扣同等积分给第一名；2v2 胜队每人加分、负队每人扣同等分数，每份最多10。',
   poker: '每人初始 1000 娱乐筹码，多局沿用上一局余额；本局积分为本局结束余额减去本局开始余额。',
   paodekuai: '按照出完牌的名次结算，炸弹倍率作用于名次积分。',
   zhengshangyou: '按照出完牌的名次结算，炸弹倍率作用于名次积分。',
@@ -100,6 +103,9 @@ interface OfflineSession {
   poker?: OfflinePokerState;
   createdAt?: number;
   recordedRound?: number;
+  variant?: 'solo' | 'team';
+  offlineUndo?: Omit<OfflineSession, 'offlineUndo'>;
+  undo?: OfflinePokerSession['undo'];
   startingStacks?: Record<string, number>;
 }
 
@@ -171,17 +177,6 @@ function ChipStack({ amount, compact = false }: { amount: number; compact?: bool
   </span>;
 }
 
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
-  useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [onClose]);
-  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="modal" role="dialog" aria-modal="true" onMouseDown={(e) => e.stopPropagation()}>
-    <header><h2>{title}</h2><button className="icon-button" onClick={onClose} aria-label="关闭"><X size={20} /></button></header>{children}
-  </section></div>;
-}
-
 function TurnTimer({ active, deadline, duration = 30_000 }: { active: boolean; deadline?: number; duration?: number }) {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -209,6 +204,8 @@ export function CardRoom() {
   const [recentRoom, setRecentRoom] = useState('');
   const [offline, setOffline] = useState<OfflineSession | null>(null);
   const [savedOffline, setSavedOffline] = useState(false);
+  const [recovery, setRecovery] = useState<'unknown' | 'saved' | 'temporary' | 'error'>('unknown');
+  const pendingRequest = useRef(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [vibrationEnabled, setVibrationEnabled] = useState(true);
   const previousGame = useRef<{ room: string; round: number; phase: string; turn: number; hand: string; play: string; reveal: string; pot: number; community: number } | null>(null);
@@ -228,9 +225,15 @@ export function CardRoom() {
     const savedSession = readOfflineSession();
     // A tab already seated in an online room must reconnect there first. Keep
     // the offline hand available through the resume button if rejoin fails.
+    const invitation = new URLSearchParams(window.location.search).get('room');
+    if (invitation && /^\d{6}$/.test(invitation)) {
+      setJoinCode(invitation); setNotice('已填入好友的房间号，点击加入即可入座');
+      if (sessionStorage.getItem('xy-room') !== invitation) sessionStorage.removeItem('xy-room');
+    }
+    document.documentElement.dataset.motion = localStorage.getItem('xy-motion') ?? '';
     const onlineRoomCode = sessionStorage.getItem('xy-room');
-    setOffline(onlineRoomCode ? null : savedSession);
-    setSavedOffline(Boolean(onlineRoomCode && savedSession));
+    setOffline(onlineRoomCode || invitation ? null : savedSession);
+    setSavedOffline(Boolean((onlineRoomCode || invitation) && savedSession));
     setSoundEnabled(localStorage.getItem('xy-sound') !== 'off');
     setVibrationEnabled(localStorage.getItem('xy-vibration') !== 'off');
     /* eslint-enable react-hooks/set-state-in-effect */
@@ -260,6 +263,9 @@ export function CardRoom() {
       }
     };
     socket.on('room:update', update);
+    const messages = (value: { code: string; messages: ClientRoom['messages'] }) => setRoom((previous) => previous?.code === value.code ? { ...previous, messages: value.messages } : previous);
+    const removed = (value: { message: string }) => { sessionStorage.removeItem('xy-room'); localStorage.removeItem('xy-recent-room'); setRecentRoom(''); setRoom(null); setNotice(value.message); };
+    socket.on('room:messages', messages); socket.on('room:removed', removed);
     const rejoin = () => {
       const code = sessionStorage.getItem('xy-room');
       const name = localStorage.getItem('xy-name') ?? current.name;
@@ -268,18 +274,23 @@ export function CardRoom() {
         else { sessionStorage.removeItem('xy-room'); localStorage.removeItem('xy-recent-room'); setRecentRoom(''); setRoom(null); setNotice('旧房间已失效，请重新创建房间'); }
       });
     };
-    const onConnect = () => { setConnected(true); setNotice(''); rejoin(); };
+    const refreshHealth = () => {
+      void fetch(`${serverUrl}/health`, { signal: AbortSignal.timeout(8000) }).then((r) => r.json()).then((data) => setRecovery(data.durableRooms ? 'saved' : data.storage?.mode === 'redis' ? 'error' : 'temporary')).catch(() => setRecovery('unknown'));
+    };
+    const healthTimer = window.setInterval(refreshHealth, 60_000);
+    const onConnect = () => { setConnected(true); if (!invitation) setNotice(''); refreshHealth(); rejoin(); };
     const onDisconnect = () => setConnected(false);
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
     socket.on('connect_error', () => setNotice('房间服务暂时不可用，请稍后重试'));
     socket.connect();
-    if (socket.connected) rejoin();
-    return () => { socket.off('room:update', update); socket.off('connect', onConnect); socket.off('disconnect', onDisconnect); socket.off('connect_error'); };
+    if (socket.connected) { refreshHealth(); rejoin(); }
+    return () => { window.clearInterval(healthTimer); socket.off('room:update', update); socket.off('room:messages', messages); socket.off('room:removed', removed); socket.off('connect', onConnect); socket.off('disconnect', onDisconnect); socket.off('connect_error'); };
   }, []);
 
   const emit = async (event: string, payload: unknown = {}): Promise<{ ok: boolean; room?: ClientRoom; error?: string }> => {
-    setBusy(true); setNotice(socket.connected ? '' : '正在连接房间服务，请稍候…');
+    if (pendingRequest.current) return { ok: false, error: '上一项操作还在处理中' };
+    pendingRequest.current = true; setBusy(true); setNotice(socket.connected ? '' : '正在连接房间服务，请稍候…');
     try {
       if (!socket.connected) await new Promise<void>((resolve, reject) => {
         const timer = window.setTimeout(() => { socket.off('connect', onConnect); reject(new Error('连接超时')); }, 30_000);
@@ -293,10 +304,10 @@ export function CardRoom() {
       else setNotice('');
       return result;
     } catch {
-      const result = { ok: false, error: '无法连接房间服务，请刷新后重试' };
+      const result = { ok: false, error: socket.connected ? '操作结果未确认，请先查看牌桌状态再重试' : '连接未恢复，请稍后重试；页面会自动尝试回座' };
       setNotice(result.error);
       return result;
-    } finally { setBusy(false); }
+    } finally { pendingRequest.current = false; setBusy(false); }
   };
 
   const prepareIdentity = () => {
@@ -318,7 +329,7 @@ export function CardRoom() {
         seat, score: 0,
       }));
       const nextOffline = {
-        gameId, players, current: setup.hostSeat, dealer: setup.hostSeat, round: 1, matchRounds: setup.matchRounds, totalScores: {}, createdAt: Date.now(),
+        gameId, players, variant: setup.variant, current: setup.hostSeat, dealer: setup.hostSeat, round: 1, matchRounds: setup.matchRounds, totalScores: {}, createdAt: Date.now(),
         targetRank: randomTargetRank(),
         shots: Object.fromEntries(players.map((player) => [player.id, 0])),
         bulletCount: setup.bulletCount,
@@ -411,18 +422,18 @@ export function CardRoom() {
     if (vibrationEnabled && before.turn !== snapshot.turn && room.players[current.turn]?.id === identity.playerId && 'vibrate' in navigator) navigator.vibrate(70);
   }, [room, identity.playerId, soundEnabled, vibrationEnabled]);
 
-  const totalScore = useMemo(() => history.reduce((sum, item) => sum + item.score, 0), [history]);
+  const totalScore = useMemo(() => history.filter((item) => item.gameId !== 'poker' && item.gameId !== 'fishing').reduce((sum, item) => sum + item.score, 0), [history]);
   const recordOffline = (playedGame: GameId, score: number, recordKey?: string) => setHistory((items) => {
     const key = recordKey ?? `offline-${Date.now()}`;
     if (items.some((item) => item.key === key)) return items;
-    const item: HistoryItem = { key, at: Date.now(), gameId: playedGame, score, result: score > 0 ? '胜' : score < 0 ? '负' : '平' };
+    const item: HistoryItem = { key, at: Date.now(), gameId: playedGame, score, result: playedGame === 'fishing' ? '已记分' : score > 0 ? '胜' : score < 0 ? '负' : '平' };
     const updated = [item, ...items].slice(0, 50);
     localStorage.setItem('xy-history', JSON.stringify(updated));
     return updated;
   });
 
   if (offline?.gameId === 'poker') return <OfflinePokerTable initial={{ ...offline, gameId: 'poker' }} localPlayerId={identity.playerId} onRecord={(score, key) => recordOffline('poker', score, key)} onExit={() => { setOffline(null); setSavedOffline(true); }} />;
-  if (offline) return <OfflineTable session={offline} localPlayerId={identity.playerId} soundEnabled={soundEnabled} onSound={(value) => { setSoundEnabled(value); localStorage.setItem('xy-sound', value ? 'on' : 'off'); }} onRecord={recordOffline} onExit={() => { localStorage.removeItem('xy-offline-session'); setOffline(null); }} />;
+  if (offline) return <OfflineTable session={offline} localPlayerId={identity.playerId} soundEnabled={soundEnabled} onSound={(value) => { setSoundEnabled(value); localStorage.setItem('xy-sound', value ? 'on' : 'off'); }} onRecord={recordOffline} onExit={() => { setOffline(null); setSavedOffline(true); }} />;
 
   if (!room) return <main className="home-shell">
     <header className="brand-bar"><div className="brand-lockup"><div className="brand-mark"><span>小</span></div><div><h1>小赌怡情</h1><p>FAMILY CARD ROOM</p></div></div><div className="brand-rule"><span><span className="connection-dot online" />牌友在线</span><i /><span>七种玩法</span></div><nav><button className="icon-label" onClick={() => setPanel('history')} title="查看我的战绩"><History size={18} />我的战绩</button><button className="icon-label" onClick={() => setPanel('rules')} title="查看完整规则"><CircleHelp size={18} />规则大全</button></nav></header>
@@ -434,7 +445,7 @@ export function CardRoom() {
         <span className="field-label avatar-label">头像</span>
         <div className="avatars" aria-label="选择头像">{AVATARS.map((text, index) => <button key={text} aria-label={`头像 ${text}`} aria-pressed={identity.avatar === index} className={identity.avatar === index ? 'active' : ''} onClick={() => setIdentity({ ...identity, avatar: index })}>{text}</button>)}</div>
         {recentRoom && <button className="resume-button" onClick={() => void resumeRoom()}><RotateCcw size={17} /><span><small>未结束的牌局</small><strong>继续房间 {recentRoom}</strong></span><ArrowRight size={16} /></button>}
-        {savedOffline && <button className="resume-button" onClick={() => { setOffline(readOfflineSession()); setSavedOffline(false); }}><RotateCcw size={17} /><span><small>已保存到本机</small><strong>继续线下德州</strong></span><ArrowRight size={16} /></button>}
+        {savedOffline && <button className="resume-button" onClick={() => { setOffline(readOfflineSession()); setSavedOffline(false); }}><RotateCcw size={17} /><span><small>已保存到本机</small><strong>继续线下牌局</strong></span><ArrowRight size={16} /></button>}
         <div className="rail-divider"><span>加入牌局</span></div>
         <div className="join-box"><input className="text-input room-input" inputMode="numeric" maxLength={6} placeholder="000000" aria-label="六位房间号" value={joinCode} onChange={(e) => setJoinCode(e.target.value.replace(/\D/g, ''))} onKeyDown={(e) => e.key === 'Enter' && void joinRoom()} /><button className="secondary-button" disabled={busy} onClick={() => void joinRoom()}><DoorOpen size={18} />加入</button></div>
         {notice && <p className="notice">{notice}</p>}
@@ -443,7 +454,7 @@ export function CardRoom() {
       <section className="game-browser">
         <div className="browser-heading"><div><span className="eyebrow">今晚开一桌</span><h2>选择玩法</h2></div><div className="game-count"><b>07</b><span>种玩法</span></div></div>
         {recentRoom && <button className="mobile-resume" onClick={() => void resumeRoom()}><RotateCcw size={16} /><span>继续未结束的房间 <b>{recentRoom}</b></span><ArrowRight size={16} /></button>}
-        {savedOffline && <button className="mobile-resume" onClick={() => { setOffline(readOfflineSession()); setSavedOffline(false); }}><RotateCcw size={16} /><span>继续已保存的线下德州</span><ArrowRight size={16} /></button>}
+        {savedOffline && <button className="mobile-resume" onClick={() => { setOffline(readOfflineSession()); setSavedOffline(false); }}><RotateCcw size={16} /><span>继续已保存的线下牌局</span><ArrowRight size={16} /></button>}
         <div className="mobile-join"><span>已有房间？</span><input inputMode="numeric" maxLength={6} placeholder="输入六位房间号" aria-label="手机端六位房间号" value={joinCode} onChange={(e) => setJoinCode(e.target.value.replace(/\D/g, ''))} onKeyDown={(e) => e.key === 'Enter' && void joinRoom()} /><button disabled={busy} onClick={() => void joinRoom()}>加入房间 <ArrowRight size={15} /></button></div>
         <div className={`featured-game featured-${GAME_INFO[gameId].tone}`}>
           <div className="featured-copy"><span className="mode-tag">{GAME_VISUALS[gameId].label}</span><h3>{GAME_INFO[gameId].name}</h3><p>{GAME_INFO[gameId].short}</p><div className="feature-meta"><span><Users size={16} />{GAME_INFO[gameId].players}</span><span>{gameId === 'fishing' ? '仅线下' : '线上 / 线下'}</span></div><button className="primary-button create-button" disabled={busy} onClick={() => setSetupOpen(true)}><ArrowRight size={20} />开始游戏</button>{notice && <p className="create-notice">{notice}</p>}</div>
@@ -462,8 +473,10 @@ export function CardRoom() {
 
   return <main className={`room-shell theme-${room.gameId}`}>
     <header className="room-header"><button className="icon-button light" onClick={leave} aria-label="返回首页" title="返回首页"><ChevronLeft /></button><div><strong>{GAME_INFO[room.gameId].name}</strong><span className={`status-dot state-${room.status}`} />{room.status === 'lobby' ? '等待中' : room.status === 'playing' ? '进行中' : '已结束'}</div>{game?.gameId === 'poker' && <div className="header-stat"><small>底池</small><b>{game.pot ?? 0}</b></div>}{game?.gameId === 'liarsbar' && <div className="header-stat"><small>目标牌</small><b>{game.targetRank ?? '-'}</b></div>}<button className="room-code" onClick={() => void copyCode()} title="复制房间号"><span>房间</span>{room.code}<Copy size={15} /></button><button className="icon-button light header-tool" onClick={() => setPanel('chat')} aria-label="牌桌聊天" title="牌桌聊天"><MessageCircle size={19} />{(room.messages?.length ?? 0) > 0 && <i />}</button><button className="icon-button light header-tool" onClick={() => setPanel('settings')} aria-label="牌桌设置" title="牌桌设置"><Settings size={19} /></button><button className="icon-button light" onClick={() => setPanel('rules')} aria-label="查看规则" title="查看规则"><CircleHelp /></button></header>
+    <RoomTools key={room.code} room={room} playerId={identity.playerId} busy={busy} command={emit} />
+    {(recovery === 'temporary' || recovery === 'error') && <div className="recovery-banner" role="status">{recovery === 'error' ? '牌局保存暂时异常，请保持页面，避免结束当前房间。' : '当前支持断线回座；服务重启后房间无法保留。'}</div>}
     {!connected && <div className="connection-banner" role="status"><Wifi size={16} />连接中断，正在尝试恢复牌局…</div>}
-    {room.status === 'lobby' ? <Lobby room={room} isHost={isHost} busy={busy} notice={notice} onAddBot={() => void emit('room:addBot')} onStart={() => void emit('room:start')} /> : game && <GameTable room={room} playerId={identity.playerId} selected={selected} setSelected={setSelected} isTurn={Boolean(isTurn)} soundEnabled={soundEnabled} action={action} busy={busy} notice={notice} onRestart={() => void emit('room:start')} />}
+    {room.status === 'lobby' ? <Lobby room={room} isHost={isHost} busy={busy} notice={notice} onAddBot={() => void emit('room:addBot')} onStart={() => void emit('room:start')} /> : game && <GameTable room={room} playerId={identity.playerId} selected={selected} setSelected={setSelected} isTurn={Boolean(isTurn)} soundEnabled={soundEnabled} action={action} busy={busy} notice={notice} onRestart={() => void emit(room.round >= Number(room.options.matchRounds ?? 3) || (room.gameId === 'poker' && Object.values(room.game?.stacks ?? {}).filter((amount) => amount > 0).length < 2) ? 'room:resetMatch' : 'room:start')} />}
     {notice && room.status !== 'lobby' && <div className="toast">{notice}</div>}
     {panel === 'rules' && <RulesPanel selected={room.gameId} onClose={() => setPanel(null)} />}
     {panel === 'chat' && <ChatPanel room={room} playerId={identity.playerId} onSend={(text) => emit('chat:send', { text })} onClose={() => setPanel(null)} />}
@@ -500,9 +513,16 @@ function GameSetup({ gameId, onClose, onStart }: { gameId: GameId; onClose: () =
   </Modal>;
 }
 
-function OfflineTable({ session: initial, localPlayerId, soundEnabled, onSound, onRecord, onExit }: { session: OfflineSession; localPlayerId: string; soundEnabled: boolean; onSound: (enabled: boolean) => void; onRecord: (gameId: GameId, score: number) => void; onExit: () => void }) {
+function OfflineTable({ session: initial, localPlayerId, soundEnabled, onSound, onRecord, onExit }: { session: OfflineSession; localPlayerId: string; soundEnabled: boolean; onSound: (enabled: boolean) => void; onRecord: (gameId: GameId, score: number, key?: string) => void; onExit: () => void }) {
   const [session, setSession] = useState(initial);
   const [showRules, setShowRules] = useState(false);
+  const [scoreNotice, setScoreNotice] = useState('');
+  const changeSession = (update: (value: OfflineSession) => OfflineSession) => setSession((value) => {
+    const { offlineUndo: _undo, ...before } = value;
+    const next = update(value);
+    return { ...next, offlineUndo: next.round !== value.round || next.completed !== value.completed ? undefined : before };
+  });
+  const undo = () => { if (session.offlineUndo && !shotAnimation) { setSession(session.offlineUndo); setScoreNotice(''); } };
   const [shotAnimation, setShotAnimation] = useState<'spinning' | 'hit' | 'empty' | null>(null);
   const [shotOutcome, setShotOutcome] = useState<{ name: string; attempt: number } | null>(null);
   const shotTimers = useRef<number[]>([]);
@@ -510,25 +530,30 @@ function OfflineTable({ session: initial, localPlayerId, soundEnabled, onSound, 
   const currentPlayer = session.players[session.current];
   useEffect(() => { localStorage.setItem('xy-offline-session', JSON.stringify(session)); }, [session]);
   useEffect(() => () => { shotTimers.current.forEach(window.clearTimeout); }, []);
-  const changeName = (id: string, name: string) => setSession((value) => ({ ...value, players: value.players.map((player) => player.id === id ? { ...player, name: name.slice(0, 10) } : player) }));
-  const score = (id: string, amount: number) => setSession((value) => ({ ...value, players: value.players.map((player) => player.id === id ? { ...player, score: Number((player.score + amount).toFixed(1)) } : player) }));
-  const nextPlayer = () => setSession((value) => {
+  const changeName = (id: string, name: string) => changeSession((value) => ({ ...value, players: value.players.map((player) => player.id === id ? { ...player, name: name.slice(0, 10) } : player) }));
+  const score = (id: string, amount: number) => changeSession((value) => ({ ...value, players: value.players.map((player) => player.id === id ? { ...player, score: Number((player.score + amount).toFixed(1)) } : player) }));
+  const nextPlayer = () => changeSession((value) => {
     let next = value.current;
     do next = (next + 1) % value.players.length; while (value.players[next]?.eliminated);
     return { ...value, current: next, message: `轮到 ${value.players[next]!.name}` };
   });
-  const chooseShooter = (id: string) => setSession((value) => {
+  const chooseShooter = (id: string) => changeSession((value) => {
     const current = value.players.findIndex((player) => player.id === id && !player.eliminated);
     return current < 0 ? value : { ...value, current, message: `${value.players[current]!.name} 输掉质疑，准备扣动扳机` };
   });
-  const nextRound = () => setSession((value) => {
-    onRecord(value.gameId, value.players.find((player) => player.id === localPlayerId)?.score ?? 0);
-    const totalScores = Object.fromEntries(value.players.map((player) => [player.id, Number(((value.totalScores[player.id] ?? 0) + player.score).toFixed(2))]));
-    if (value.round >= value.matchRounds) return { ...value, totalScores, completed: true, message: `本轮 ${value.matchRounds} 局已完成` };
-    const dealer = (value.dealer + 1) % value.players.length;
-    return { ...value, totalScores, players: value.players.map((player) => ({ ...player, score: 0 })), dealer, current: dealer, round: value.round + 1, message: `第 ${value.round + 1} 局已就绪` };
-  });
-  const resolveRevolver = () => setSession((value) => {
+  const nextRound = () => {
+    const zeroSum = ['doudizhu3', 'doudizhu4', 'paodekuai', 'zhengshangyou'].includes(session.gameId);
+    if (zeroSum && Math.abs(session.players.reduce((sum, player) => sum + player.score, 0)) > 0.01) { setScoreNotice('本局积分合计必须为 0，请用自动记分或修正手动分数。'); return; }
+    setScoreNotice('');
+    changeSession((value) => {
+      onRecord(value.gameId, value.players.find((player) => player.id === localPlayerId)?.score ?? 0, `offline-${value.gameId}-${value.createdAt ?? 0}-${value.round}`);
+      const totalScores = Object.fromEntries(value.players.map((player) => [player.id, Number(((value.totalScores[player.id] ?? 0) + player.score).toFixed(2))]));
+      if (value.round >= value.matchRounds) return { ...value, totalScores, completed: true, message: `本轮 ${value.matchRounds} 局已完成` };
+      const dealer = (value.dealer + 1) % value.players.length;
+      return { ...value, totalScores, players: value.players.map((player) => ({ ...player, score: 0 })), dealer, current: dealer, round: value.round + 1, message: `第 ${value.round + 1} 局已就绪` };
+    });
+  };
+  const resolveRevolver = () => changeSession((value) => {
     const shooter = value.players[value.current]!;
     const shots = { ...value.shots, [shooter.id]: (value.shots[shooter.id] ?? 0) + 1 };
     const hit = value.bulletChambers[shooter.id]?.includes(shots[shooter.id]!) ?? false;
@@ -562,8 +587,8 @@ function OfflineTable({ session: initial, localPlayerId, soundEnabled, onSound, 
     }, 880));
   };
   const liarsFinished = session.gameId === 'liarsbar' && session.players.filter((player) => !player.eliminated).length === 1;
-  const restartLiarsBar = () => setSession((value) => {
-    onRecord(value.gameId, value.players.find((player) => player.id === localPlayerId)?.score ?? 0);
+  const restartLiarsBar = () => changeSession((value) => {
+    onRecord(value.gameId, value.players.find((player) => player.id === localPlayerId)?.score ?? 0, `offline-${value.gameId}-${value.createdAt ?? 0}-${value.round}`);
     const totalScores = Object.fromEntries(value.players.map((player) => [player.id, Number(((value.totalScores[player.id] ?? 0) + player.score).toFixed(2))]));
     if (value.round >= value.matchRounds) return { ...value, totalScores, completed: true, message: `本轮 ${value.matchRounds} 局已完成` };
     const dealer = (value.dealer + 1) % value.players.length;
@@ -581,10 +606,13 @@ function OfflineTable({ session: initial, localPlayerId, soundEnabled, onSound, 
   const displayedShots = shotOutcome?.attempt ?? (session.shots[currentPlayer?.id ?? ''] ?? 0);
 
   return <main className={`offline-shell theme-${session.gameId}`}>
-    <header className="room-header"><button className="icon-button light" onClick={onExit} aria-label="退出线下牌桌"><ChevronLeft /></button><div><strong>{GAME_INFO[session.gameId].name}</strong><span className="offline-badge">线下</span></div><div className="offline-round">第 {session.round} / {session.matchRounds} 局</div><button className="icon-button light" onClick={() => onSound(!soundEnabled)} aria-label={soundEnabled ? '关闭音效' : '开启音效'}>{soundEnabled ? <Volume2 size={19} /> : <VolumeX size={19} />}</button><button className="icon-button light" onClick={() => setShowRules(true)} aria-label="规则"><CircleHelp /></button></header>
+    <header className="room-header"><button className="icon-button light" onClick={() => { localStorage.setItem('xy-offline-session', JSON.stringify(session)); onExit(); }} aria-label="返回首页并保存牌局"><ChevronLeft /></button><div><strong>{GAME_INFO[session.gameId].name}</strong><span className="offline-badge">线下</span></div><div className="offline-round">第 {session.round} / {session.matchRounds} 局</div><button className="icon-button light" onClick={() => onSound(!soundEnabled)} aria-label={soundEnabled ? '关闭音效' : '开启音效'}>{soundEnabled ? <Volume2 size={19} /> : <VolumeX size={19} />}</button><button className="icon-button light" onClick={() => setShowRules(true)} aria-label="规则"><CircleHelp /></button></header>
     <section className="offline-table">
-      <div className="offline-players">{session.players.map((player, index) => <div className={`offline-player ${index === session.current ? 'turn' : ''} ${player.eliminated ? 'eliminated' : ''}`} key={player.id}><span>{AVATARS[player.avatar] ?? '友'}</span><input value={player.name} onChange={(event) => changeName(player.id, event.target.value)} aria-label={`座位${player.seat + 1}昵称`} /><small>{index === session.dealer ? '庄家' : `座位 ${player.seat + 1}`}</small><div className="score-stepper"><button onClick={() => score(player.id, -0.1)} aria-label={`${player.name}减分`}><Minus size={14} /></button><b>{player.score > 0 ? '+' : ''}{player.score.toFixed(1)}</b><button onClick={() => score(player.id, 0.1)} aria-label={`${player.name}加分`}><Plus size={14} /></button></div></div>)}</div>
+      <div className="offline-save-tools"><span>自动保存在本机 · 返回后可继续</span><button className="secondary-button" disabled={!session.offlineUndo || Boolean(shotAnimation)} onClick={undo}>撤销本局上一步</button></div>
+      <div className="offline-players">{session.players.map((player, index) => <div className={`offline-player ${index === session.current ? 'turn' : ''} ${player.eliminated ? 'eliminated' : ''}`} key={player.id}><span>{AVATARS[player.avatar] ?? '友'}</span><input value={player.name} onChange={(event) => changeName(player.id, event.target.value)} aria-label={`座位${player.seat + 1}昵称`} /><small>{index === session.dealer ? '庄家' : `座位 ${player.seat + 1}`}</small><div className="score-stepper"><button onClick={() => score(player.id, session.gameId === 'fishing' ? -1 : -0.1)} aria-label={`${player.name}减分`}><Minus size={14} /></button><b>{player.score > 0 ? '+' : ''}{player.score.toFixed(session.gameId === 'fishing' ? 0 : 1)}</b><button onClick={() => score(player.id, session.gameId === 'fishing' ? 1 : 0.1)} aria-label={`${player.name}加分`}><Plus size={14} /></button></div></div>)}</div>
       <div className={`offline-center ${shotAnimation ? `shot-${shotAnimation}` : ''}`}><span className="game-seal">{GAME_VISUALS[session.gameId].mark}</span><small>{GAME_INFO[session.gameId].name}</small><h2 aria-live="polite">{shotAnimation === 'spinning' ? '扳机扣下，弹巢旋转…' : shotAnimation === 'hit' ? `${displayedShooter} 中弹淘汰` : shotAnimation === 'empty' ? '咔哒，空膛' : session.message}</h2>{session.gameId === 'liarsbar' ? <><div className="offline-target"><span>目标牌</span><b>{session.targetRank}</b></div><RevolverStage shots={displayedShots} phase={shotAnimation} /><p>{displayedShooter} · 已扣动 {displayedShots} / 6 次 · 装填 {session.bulletCount} 发</p>{session.completed ? <div className="match-summary"><strong>本轮总成绩</strong>{[...session.players].sort((a, b) => (session.totalScores[b.id] ?? 0) - (session.totalScores[a.id] ?? 0)).map((player) => <span key={player.id}>{player.name} <b>{session.totalScores[player.id] ?? 0}</b></span>)}</div> : liarsFinished ? <button className="primary-button" disabled={Boolean(shotAnimation)} onClick={restartLiarsBar}><RotateCcw size={18} />{session.round >= session.matchRounds ? '完成本轮并查看总成绩' : '记录并再来一局'}</button> : <div className="offline-actions"><label className="shooter-picker">输掉质疑的玩家 <select aria-label="选择开枪者" value={currentPlayer?.id ?? ''} disabled={Boolean(shotAnimation)} onChange={(event) => chooseShooter(event.target.value)}>{session.players.filter((player) => !player.eliminated).map((player) => <option key={player.id} value={player.id}>{player.name}</option>)}</select></label><button className="secondary-button" disabled={Boolean(shotAnimation)} onClick={nextPlayer}>下一位玩家</button><button className="trigger-button" disabled={Boolean(shotAnimation)} onClick={fireRevolver}><Crosshair />{shotAnimation === 'spinning' ? '转动弹巢…' : '输家开枪'}</button></div>}</> : <><p>庄家：{session.players[session.dealer]?.name} · 当前：{currentPlayer?.name}</p>{session.completed ? <div className="match-summary"><strong>本轮总成绩</strong>{[...session.players].sort((a, b) => (session.totalScores[b.id] ?? 0) - (session.totalScores[a.id] ?? 0)).map((player) => <span key={player.id}>{player.name} <b>{session.totalScores[player.id] ?? 0}</b></span>)}</div> : <div className="offline-actions"><button className="secondary-button" onClick={nextPlayer}>下一位</button><button className="primary-button" onClick={nextRound}>{session.round >= session.matchRounds ? '完成本轮并查看总成绩' : '记录并下一局'}</button></div>}</>}</div>
+      {!session.completed && ['doudizhu3', 'doudizhu4', 'paodekuai', 'zhengshangyou'].includes(session.gameId) && <OfflineScoreControls key={session.round} gameId={session.gameId} players={session.players} variant={session.variant} onApply={(scores) => { setScoreNotice(''); changeSession((value) => ({ ...value, players: value.players.map((player) => ({ ...player, score: scores[player.id] ?? 0 })) })); }} />}
+      {scoreNotice && <p className="notice" role="alert">{scoreNotice}</p>}
     </section>
     {showRules && <RulesPanel selected={session.gameId} onClose={() => setShowRules(false)} />}
   </main>;
@@ -733,7 +761,7 @@ function RevolverReveal({ game }: { game: NonNullable<ClientRoom['game']> }) {
 function Settlement({ room, playerId, onRestart }: { room: ClientRoom; playerId: string; onRestart: () => void }) {
   const game = room.game!;
   const sorted = [...room.players].sort((a, b) => (game.scores?.[b.id] ?? 0) - (game.scores?.[a.id] ?? 0));
-  return <div className={`settlement ${game.winnerIds?.includes(playerId) ? 'won' : ''}`}><div className="settlement-mark">{game.winnerIds?.includes(playerId) ? '胜' : '终'}</div><span className="eyebrow">本局结算 · 第 {room.round} / {Number(room.options.matchRounds ?? 3)} 局</span><h2>{game.winnerIds?.includes(playerId) ? (game.gameId === 'liarsbar' ? '骗子之王' : '本局获胜') : '牌局结束'}</h2><p>{game.message}</p><div className="settlement-stats">{game.multiplier && <span>最终倍率 <b>{game.multiplier}×</b></span>}{game.pot !== undefined && <span>本局底池 <b>{game.pot}</b></span>}{game.roundNumber && <span>对局轮数 <b>{game.roundNumber}</b></span>}{game.gameId === 'poker' && (game.pots?.length ?? 0) > 1 && game.pots!.map((pot, index) => <span key={`${index}-${pot}`}>{index === 0 ? '主池' : `边池 ${index}`} <b>{pot}</b></span>)}</div>{game.gameId === 'poker' && game.showdownHands && <div className="showdown-hands">{Object.entries(game.showdownHands).map(([id, cards]) => <div key={id}><span>{room.players.find((player) => player.id === id)?.name}</span>{cards.map((card) => <PlayingCard card={card} key={card.id} small />)}</div>)}</div>}{sorted.map((player, i) => <div className={`score-row ${player.id === playerId ? 'mine' : ''}`} key={player.id}><b>{i + 1}</b><span>{player.name}{player.id === playerId ? ' · 我' : ''}</span><strong className={(game.scores?.[player.id] ?? 0) >= 0 ? 'positive' : 'negative'}>{(game.scores?.[player.id] ?? 0) > 0 ? '+' : ''}{game.scores?.[player.id] ?? 0}</strong>{game.gameId === 'poker' && <small>剩余 {game.stacks?.[player.id] ?? 0} 筹码</small>}</div>)}<p className="settlement-note">{SCORE_NOTES[room.gameId]}</p>{room.round >= Number(room.options.matchRounds ?? 3) && <div className="match-summary"><strong>本轮总成绩</strong>{[...room.players].sort((a, b) => (room.matchScores?.[b.id] ?? 0) - (room.matchScores?.[a.id] ?? 0)).map((player) => <span key={player.id}>{player.name} <b>{room.matchScores?.[player.id] ?? 0}</b></span>)}</div>}{room.hostId === playerId && room.round < Number(room.options.matchRounds ?? 3) && <button className="primary-button" onClick={onRestart}><RotateCcw size={17} />再来一局</button>}</div>;
+  return <div className={`settlement ${game.winnerIds?.includes(playerId) ? 'won' : ''}`}><div className="settlement-mark">{game.winnerIds?.includes(playerId) ? '胜' : '终'}</div><span className="eyebrow">本局结算 · 第 {room.round} / {Number(room.options.matchRounds ?? 3)} 局</span><h2>{game.winnerIds?.includes(playerId) ? (game.gameId === 'liarsbar' ? '骗子之王' : '本局获胜') : '牌局结束'}</h2><p>{game.message}</p><div className="settlement-stats">{game.multiplier && <span>最终倍率 <b>{game.multiplier}×</b></span>}{game.pot !== undefined && <span>本局底池 <b>{game.pot}</b></span>}{game.roundNumber && <span>对局轮数 <b>{game.roundNumber}</b></span>}{game.gameId === 'poker' && (game.pots?.length ?? 0) > 1 && game.pots!.map((pot, index) => <span key={`${index}-${pot}`}>{index === 0 ? '主池' : `边池 ${index}`} <b>{pot}</b></span>)}</div>{game.gameId === 'poker' && game.showdownHands && <div className="showdown-hands">{Object.entries(game.showdownHands).map(([id, cards]) => <div key={id}><span>{room.players.find((player) => player.id === id)?.name}</span>{cards.map((card) => <PlayingCard card={card} key={card.id} small />)}</div>)}</div>}{sorted.map((player, i) => <div className={`score-row ${player.id === playerId ? 'mine' : ''}`} key={player.id}><b>{i + 1}</b><span>{player.name}{player.id === playerId ? ' · 我' : ''}</span><strong className={(game.scores?.[player.id] ?? 0) >= 0 ? 'positive' : 'negative'}>{(game.scores?.[player.id] ?? 0) > 0 ? '+' : ''}{game.scores?.[player.id] ?? 0}</strong>{game.gameId === 'poker' && <small>剩余 {game.stacks?.[player.id] ?? 0} 筹码</small>}</div>)}<p className="settlement-note">{SCORE_NOTES[room.gameId]}</p>{room.round >= Number(room.options.matchRounds ?? 3) && <div className="match-summary"><strong>本轮总成绩</strong>{[...room.players].sort((a, b) => (room.matchScores?.[b.id] ?? 0) - (room.matchScores?.[a.id] ?? 0)).map((player) => <span key={player.id}>{player.name} <b>{room.matchScores?.[player.id] ?? 0}</b></span>)}</div>}{room.hostId === playerId && <button className="primary-button" onClick={onRestart}><RotateCcw size={17} />{room.round >= Number(room.options.matchRounds ?? 3) || (room.gameId === 'poker' && Object.values(game.stacks ?? {}).filter((amount) => amount > 0).length < 2) ? '保留座位，再开一轮' : '再来一局'}</button>}</div>;
 }
 
 function RulesPanel({ selected, setSelected, onClose }: { selected: GameId; setSelected?: (id: GameId) => void; onClose: () => void }) {
@@ -755,13 +783,22 @@ function ChatPanel({ room, playerId, onSend, onClose }: { room: ClientRoom; play
 }
 
 function SettingsPanel({ sound, vibration, onSound, onVibration, onClose }: { sound: boolean; vibration: boolean; onSound: (value: boolean) => void; onVibration: (value: boolean) => void; onClose: () => void }) {
-  return <Modal title="牌桌设置" onClose={onClose}><div className="settings-list"><label><span>{sound ? <Volume2 size={20} /> : <VolumeX size={20} />}<b>游戏音效</b><small>发牌、出牌、回合、结算与左轮反馈</small></span><input type="checkbox" checked={sound} onChange={(event) => onSound(event.target.checked)} /></label><label><span><Crosshair size={20} /><b>震动反馈</b><small>轮到自己时轻震提醒</small></span><input type="checkbox" checked={vibration} onChange={(event) => onVibration(event.target.checked)} /></label></div></Modal>;
+  const [reduced, setReduced] = useState(() => localStorage.getItem('xy-motion') === 'reduce');
+  return <Modal title="牌桌设置" onClose={onClose}><div className="settings-list"><label><span>{sound ? <Volume2 size={20} /> : <VolumeX size={20} />}<b>游戏音效</b><small>发牌、出牌、回合、结算与左轮反馈</small></span><input type="checkbox" checked={sound} onChange={(event) => onSound(event.target.checked)} /></label><label><span><Crosshair size={20} /><b>震动反馈</b><small>轮到自己时轻震提醒</small></span><input type="checkbox" checked={vibration} onChange={(event) => onVibration(event.target.checked)} /></label><label><span><Eye size={20} /><b>减少动画</b><small>适合低性能手机或希望操作更直接时使用</small></span><input type="checkbox" aria-label="减少动画" checked={reduced} onChange={(event) => { setReduced(event.target.checked); const value = event.target.checked ? 'reduce' : ''; localStorage.setItem('xy-motion', value); document.documentElement.dataset.motion = value; }} /></label></div></Modal>;
 }
 
 function HistoryPanel({ items, total, onClose }: { items: HistoryItem[]; total: number; onClose: () => void }) {
   const [filter, setFilter] = useState<GameId | 'all'>('all');
   const visible = filter === 'all' ? items : items.filter((item) => item.gameId === filter);
   const score = filter === 'all' ? total : visible.reduce((sum, item) => sum + item.score, 0);
+  const pokerTotal = items.filter((item) => item.gameId === 'poker').reduce((sum, item) => sum + item.score, 0);
+  const fishingTotal = items.filter((item) => item.gameId === 'fishing').reduce((sum, item) => sum + item.score, 0);
+  const exportHistory = () => {
+    const clean = (value: string) => `"${value.replaceAll('\"', '\"\"')}"`;
+    const lines = ['时间,玩法,结果,数值,单位', ...items.map((item) => [new Date(item.at).toISOString(), GAME_INFO[item.gameId].name, item.result, String(item.score), item.gameId === 'poker' ? '娱乐筹码' : item.gameId === 'fishing' ? '牌堆分' : '娱乐积分'].map(clean).join(','))];
+    const url = URL.createObjectURL(new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8' }));
+    const anchor = document.createElement('a'); anchor.href = url; anchor.download = '小赌怡情-个人战绩.csv'; anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
   const wins = visible.filter((item) => item.result === '胜').length;
-  return <Modal title="我的战绩" onClose={onClose}><div className="history-total"><span>{filter === 'all' ? '累计积分' : `${GAME_INFO[filter].name}积分`}</span><strong className={score >= 0 ? 'positive' : 'negative'}>{score > 0 ? '+' : ''}{score.toFixed(1)}</strong></div><div className="history-toolbar"><span>{visible.length} 局 · {wins} 胜</span><select aria-label="按玩法筛选战绩" value={filter} onChange={(event) => setFilter(event.target.value as GameId | 'all')}><option value="all">全部玩法</option>{(Object.keys(GAME_INFO) as GameId[]).map((id) => <option key={id} value={id}>{GAME_INFO[id].name}</option>)}</select></div><div className="history-list">{visible.length ? visible.map((item) => <div key={item.key}><span className={`result ${item.result === '胜' ? 'win' : ''}`}>{item.result}</span><div><strong>{GAME_INFO[item.gameId].name}</strong><small>{new Date(item.at).toLocaleString('zh-CN')}</small></div><b className={item.score >= 0 ? 'positive' : 'negative'}>{item.score > 0 ? '+' : ''}{item.score}</b></div>) : <p className="empty-history">{items.length ? '这一玩法还没有战绩。' : '还没有战绩，创建一桌开始吧。'}</p>}</div></Modal>;
+  return <Modal title="我的战绩" onClose={onClose}><div className="history-total"><span>{filter === 'all' ? '娱乐积分（不含德州与钓鱼）' : `${GAME_INFO[filter].name}${filter === 'poker' ? '筹码' : filter === 'fishing' ? '牌堆分' : '积分'}`}</span><strong className={score >= 0 ? 'positive' : 'negative'}>{score > 0 ? '+' : ''}{score.toFixed(1)}</strong></div><div className="history-toolbar"><span>{visible.length} 局 · {wins} 胜</span><select aria-label="按玩法筛选战绩" value={filter} onChange={(event) => setFilter(event.target.value as GameId | 'all')}><option value="all">全部玩法</option>{(Object.keys(GAME_INFO) as GameId[]).map((id) => <option key={id} value={id}>{GAME_INFO[id].name}</option>)}</select><button className="text-button" disabled={!items.length} onClick={exportHistory}>导出战绩</button></div>{filter === 'all' && <div className="history-units"><span>德州娱乐筹码<b>{pokerTotal > 0 ? '+' : ''}{pokerTotal}</b></span><span>小猫钓鱼牌堆分<b>{fishingTotal}</b></span><small>最近 50 局保存在本机；导出后可自行留存。</small></div>}<div className="history-list">{visible.length ? visible.map((item) => <div key={item.key}><span className={`result ${item.result === '胜' ? 'win' : ''}`}>{item.result}</span><div><strong>{GAME_INFO[item.gameId].name}</strong><small>{new Date(item.at).toLocaleString('zh-CN')}</small></div><b className={item.score >= 0 ? 'positive' : 'negative'}>{item.score > 0 ? '+' : ''}{item.score}</b></div>) : <p className="empty-history">{items.length ? '这一玩法还没有战绩。' : '还没有战绩，创建一桌开始吧。'}</p>}</div></Modal>;
 }

@@ -35,6 +35,7 @@ export function pokerPots(state: OfflinePokerState): PokerPot[] {
 export function startPokerHand(seats: PokerSeat[], dealer: number): OfflinePokerState {
   const ready = seats.map((seat) => ({ ...seat, contributed: 0, bet: 0, folded: seat.stack === 0, acted: false }));
   if (ready.filter(live).length < 2) return { seats: ready, dealer, current: -1, street: 'settled', currentBet: 0, winners: [] };
+  if (!live(ready[dealer]!)) dealer = nextSeat(ready, dealer, live);
   const small = ready.filter(live).length === 2 ? dealer : nextSeat(ready, dealer, live);
   const big = nextSeat(ready, small, live);
   const placeBlind = (index: number, amount: number) => {
@@ -44,7 +45,10 @@ export function startPokerHand(seats: PokerSeat[], dealer: number): OfflinePoker
   };
   placeBlind(small, 10);
   placeBlind(big, 20);
-  const state: OfflinePokerState = { seats: ready, dealer, current: nextSeat(ready, big, live), street: 'preflop', currentBet: ready[big]!.bet, winners: [] };
+  const currentBet = Math.max(...ready.map((seat) => seat.bet));
+  const active = ready.filter(live);
+  const current = active.length <= 1 && active.every((seat) => seat.bet >= currentBet) ? -1 : nextSeat(ready, big, live);
+  const state: OfflinePokerState = { seats: ready, dealer, current, street: 'preflop', currentBet, winners: [] };
   return state;
 }
 
@@ -93,7 +97,7 @@ export function advancePokerStreet(state: OfflinePokerState): OfflinePokerState 
 export function settlePoker(state: OfflinePokerState, choices: string[][]): OfflinePokerState {
   if (state.street !== 'showdown') return state;
   const pots = pokerPots(state);
-  if (pots.some((pot, index) => !choices[index]?.length || choices[index]!.some((id) => !pot.eligible.includes(id)))) return state;
+  if (pots.some((pot, index) => !choices[index]?.length || new Set(choices[index]).size !== choices[index]!.length || choices[index]!.some((id) => !pot.eligible.includes(id)))) return state;
   const seats = state.seats.map((seat) => ({ ...seat }));
   const winners = new Set<string>();
   pots.forEach((pot, index) => {
