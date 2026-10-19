@@ -1,7 +1,7 @@
 import cors from 'cors';
 import express from 'express';
 import { createServer } from 'node:http';
-import { randomInt } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Server, type Socket } from 'socket.io';
@@ -283,7 +283,7 @@ io.on('connection', (socket) => {
       if (!room || room.hostId !== socket.data.playerId) throw new Error('只有房主可以添加机器人');
       if (room.status !== 'lobby' || room.players.length >= room.targetPlayers) throw new Error('不能再添加玩家');
       const seat = availableSeat(room);
-      room.players.push({ id: `bot-${room.code}-${randomInt(100000, 1000000)}`, name: `牌友${seat + 1}`, avatar: (seat + 1) % 8, connected: true, bot: true, seat });
+      room.players.push({ id: `bot-${room.code}-${randomUUID()}`, name: `牌友${seat + 1}`, avatar: (seat + 1) % 8, connected: true, bot: true, seat });
       ack?.({ ok: true }); emitRoom(room);
     } catch (error) { fail(ack, error); }
   });
