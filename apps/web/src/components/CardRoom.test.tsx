@@ -58,6 +58,7 @@ describe('创建房间', () => {
   let root: Root;
 
   beforeEach(() => {
+    socketMock.connected = true;
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ durableRooms: false, storage: { mode: 'memory' } })));
     localStorage.clear();
     sessionStorage.clear();
@@ -94,6 +95,38 @@ describe('创建房间', () => {
     window.history.replaceState({}, '', '/?room=654321');
     await act(async () => root.render(<CardRoom />));
     expect(container.querySelector<HTMLInputElement>('[aria-label="六位房间号"]')!.value).toBe('654321');
+    expect(socketMock.emitWithAck).not.toHaveBeenCalled();
+  });
+
+  it('继续房间的网络超时不会清掉入口，明确失效才清掉', async () => {
+    localStorage.setItem('xy-recent-room', '123456');
+    await act(async () => root.render(<CardRoom />));
+    socketMock.emitWithAck.mockRejectedValueOnce(new Error('timeout'));
+    await act(async () => buttonWith(container, '继续房间')!.click());
+    expect(localStorage.getItem('xy-recent-room')).toBe('123456');
+    expect(buttonWith(container, '继续房间')).toBeDefined();
+    socketMock.emitWithAck.mockResolvedValueOnce({ ok: false, error: '没有找到这个房间', errorCode: 'ROOM_NOT_FOUND' });
+    await act(async () => buttonWith(container, '继续房间')!.click());
+    expect(localStorage.getItem('xy-recent-room')).toBeNull();
+    expect(buttonWith(container, '继续房间')).toBeUndefined();
+  });
+
+  it('自动回座超时仍保留房间身份供后续重试', async () => {
+    localStorage.setItem('xy-name', '回座测试');
+    sessionStorage.setItem('xy-room', '123456');
+    socketMock.emitWithAck.mockRejectedValueOnce(new Error('timeout'));
+    await act(async () => root.render(<CardRoom />));
+    expect(sessionStorage.getItem('xy-room')).toBe('123456');
+    expect(container.textContent).toContain('回座未确认，正在重试');
+  });
+
+  it('断线时返回首页立即生效，不等待连接超时', async () => {
+    await act(async () => root.render(<CardRoom />));
+    await createOnlineRoom(container);
+    socketMock.emitWithAck.mockClear();
+    socketMock.connected = false;
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="返回首页"]')!.click());
+    expect(container.textContent).toContain('今晚开一桌');
     expect(socketMock.emitWithAck).not.toHaveBeenCalled();
   });
 

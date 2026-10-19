@@ -25,6 +25,7 @@ const GAME_VISUALS: Record<GameId, { cards: [string, string][]; mark: string; la
 };
 interface RuleSection { title: string; items: string[] }
 interface RuleContent { intro: string; sections: RuleSection[] }
+const roomIsUnavailable = (result: { errorCode?: string; error?: string }) => ['ROOM_NOT_FOUND', 'ROOM_REMOVED', 'IDENTITY_MISMATCH'].includes(result.errorCode ?? '') || result.error === '没有找到这个房间';
 const RULES: Record<GameId, RuleContent> = {
   doudizhu3: { intro: '一副 54 张牌，地主独自对抗两名农民，通过竞叫、加倍和完整组合牌型决出胜负。', sections: [
     { title: '用牌与叫地主', items: ['每人 17 张，另留 3 张底牌。三人依次选择不叫、1 分、2 分或 3 分；后叫者只能提高分数，3 分立即结束竞叫，无人叫牌则重新发牌。', '最高叫分者成为地主，公开并获得底牌。两位农民随后依次选择是否加倍，地主完成加牌后首先出牌。'] },
@@ -266,29 +267,40 @@ export function CardRoom() {
     const messages = (value: { code: string; messages: ClientRoom['messages'] }) => setRoom((previous) => previous?.code === value.code ? { ...previous, messages: value.messages } : previous);
     const removed = (value: { message: string }) => { sessionStorage.removeItem('xy-room'); localStorage.removeItem('xy-recent-room'); setRecentRoom(''); setRoom(null); setNotice(value.message); };
     socket.on('room:messages', messages); socket.on('room:removed', removed);
+    let retryTimer: number | undefined;
+    let rejoinAttempts = 0;
+    let disposed = false;
     const rejoin = () => {
       const code = sessionStorage.getItem('xy-room');
       const name = localStorage.getItem('xy-name') ?? current.name;
-      if (code && name) socket.emit('room:join', { ...current, name, avatar: Number(localStorage.getItem('xy-avatar') ?? current.avatar), code }, (result: { ok: boolean; room?: ClientRoom }) => {
-        if (result.ok && result.room) update(result.room);
-        else { sessionStorage.removeItem('xy-room'); localStorage.removeItem('xy-recent-room'); setRecentRoom(''); setRoom(null); setNotice('旧房间已失效，请重新创建房间'); }
+      if (!code || !name || !socket.connected) return;
+      rejoinAttempts += 1;
+      void socket.timeout(8000).emitWithAck('room:join', { ...current, name, avatar: Number(localStorage.getItem('xy-avatar') ?? current.avatar), code }).then((result: { ok: boolean; room?: ClientRoom; error?: string; errorCode?: string }) => {
+        if (disposed || sessionStorage.getItem('xy-room') !== code) return;
+        if (result.ok && result.room) { rejoinAttempts = 0; setNotice(''); update(result.room); }
+        else if (roomIsUnavailable(result)) { sessionStorage.removeItem('xy-room'); localStorage.removeItem('xy-recent-room'); setRecentRoom(''); setRoom(null); setNotice(result.error ?? '旧房间已失效，请重新创建房间'); }
+        else setNotice(result.error ?? '回座未确认，请保留页面并重试');
+      }).catch(() => {
+        if (disposed || sessionStorage.getItem('xy-room') !== code) return;
+        setNotice(rejoinAttempts < 3 ? '回座未确认，正在重试；请保留页面' : '暂未恢复牌局，重新连接后会再次尝试');
+        if (rejoinAttempts < 3) retryTimer = window.setTimeout(rejoin, 2000);
       });
     };
     const refreshHealth = () => {
       void fetch(`${serverUrl}/health`, { signal: AbortSignal.timeout(8000) }).then((r) => r.json()).then((data) => setRecovery(data.durableRooms ? 'saved' : data.storage?.mode === 'redis' ? 'error' : 'temporary')).catch(() => setRecovery('unknown'));
     };
     const healthTimer = window.setInterval(refreshHealth, 60_000);
-    const onConnect = () => { setConnected(true); if (!invitation) setNotice(''); refreshHealth(); rejoin(); };
-    const onDisconnect = () => setConnected(false);
+    const onConnect = () => { rejoinAttempts = 0; setConnected(true); if (!invitation) setNotice(''); refreshHealth(); rejoin(); };
+    const onDisconnect = () => { setConnected(false); window.clearTimeout(retryTimer); };
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
     socket.on('connect_error', () => setNotice('房间服务暂时不可用，请稍后重试'));
     socket.connect();
     if (socket.connected) { refreshHealth(); rejoin(); }
-    return () => { window.clearInterval(healthTimer); socket.off('room:update', update); socket.off('room:messages', messages); socket.off('room:removed', removed); socket.off('connect', onConnect); socket.off('disconnect', onDisconnect); socket.off('connect_error'); };
+    return () => { disposed = true; window.clearTimeout(retryTimer); window.clearInterval(healthTimer); socket.off('room:update', update); socket.off('room:messages', messages); socket.off('room:removed', removed); socket.off('connect', onConnect); socket.off('disconnect', onDisconnect); socket.off('connect_error'); };
   }, []);
 
-  const emit = async (event: string, payload: unknown = {}): Promise<{ ok: boolean; room?: ClientRoom; error?: string }> => {
+  const emit = async (event: string, payload: unknown = {}): Promise<{ ok: boolean; room?: ClientRoom; error?: string; errorCode?: string }> => {
     if (pendingRequest.current) return { ok: false, error: '上一项操作还在处理中' };
     pendingRequest.current = true; setBusy(true); setNotice(socket.connected ? '' : '正在连接房间服务，请稍候…');
     try {
@@ -299,7 +311,7 @@ export function CardRoom() {
         socket.connect();
         if (socket.connected) onConnect();
       });
-      const result = await socket.timeout(8000).emitWithAck(event, payload) as { ok: boolean; room?: ClientRoom; error?: string };
+      const result = await socket.timeout(8000).emitWithAck(event, payload) as { ok: boolean; room?: ClientRoom; error?: string; errorCode?: string };
       if (!result.ok) setNotice(result.error ?? '操作失败');
       else setNotice('');
       return result;
@@ -346,10 +358,11 @@ export function CardRoom() {
     if (result.room) setRoom(result.room);
   };
   const joinRoom = async () => { if (!/^\d{6}$/.test(joinCode)) return setNotice('请输入 6 位数字房间号'); const profile = prepareIdentity(); const result = await emit('room:join', { ...profile, code: joinCode }); if (result.room) setRoom(result.room); };
-  const resumeRoom = async () => { if (!recentRoom) return; const profile = prepareIdentity(); const result = await emit('room:join', { ...profile, code: recentRoom }); if (result.room) setRoom(result.room); else { localStorage.removeItem('xy-recent-room'); setRecentRoom(''); } };
-  const leave = async () => {
+  const resumeRoom = async () => { if (!recentRoom) return; const profile = prepareIdentity(); const result = await emit('room:join', { ...profile, code: recentRoom }); if (result.room) setRoom(result.room); else if (roomIsUnavailable(result)) { localStorage.removeItem('xy-recent-room'); setRecentRoom(''); } };
+  const leave = () => {
     const canResume = room?.status === 'playing';
-    await emit('room:leave'); sessionStorage.removeItem('xy-room'); setRoom(null); setSelected([]);
+    if (socket.connected) void emit('room:leave');
+    sessionStorage.removeItem('xy-room'); setRoom(null); setSelected([]);
     if (!canResume) { localStorage.removeItem('xy-recent-room'); setRecentRoom(''); }
   };
   const copyCode = async () => {
