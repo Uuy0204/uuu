@@ -201,6 +201,7 @@ export function CardRoom() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [connectionTrouble, setConnectionTrouble] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
   const [recentRoom, setRecentRoom] = useState('');
   const [offline, setOffline] = useState<OfflineSession | null>(null);
@@ -290,14 +291,15 @@ export function CardRoom() {
       void fetch(`${serverUrl}/health`, { signal: AbortSignal.timeout(8000) }).then((r) => r.json()).then((data) => setRecovery(data.durableRooms ? 'saved' : data.storage?.mode === 'redis' ? 'error' : 'temporary')).catch(() => setRecovery('unknown'));
     };
     const healthTimer = window.setInterval(refreshHealth, 60_000);
-    const onConnect = () => { rejoinAttempts = 0; setConnected(true); if (!invitation) setNotice(''); refreshHealth(); rejoin(); };
-    const onDisconnect = () => { setConnected(false); window.clearTimeout(retryTimer); };
+    const onConnect = () => { rejoinAttempts = 0; setConnected(true); setConnectionTrouble(false); if (!invitation) setNotice(''); refreshHealth(); rejoin(); };
+    const onDisconnect = () => { setConnected(false); setConnectionTrouble(true); window.clearTimeout(retryTimer); };
+    const onConnectError = () => { setConnectionTrouble(true); setNotice('房间服务暂时不可用，请稍后重试'); };
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
-    socket.on('connect_error', () => setNotice('房间服务暂时不可用，请稍后重试'));
+    socket.on('connect_error', onConnectError);
     socket.connect();
     if (socket.connected) { refreshHealth(); rejoin(); }
-    return () => { disposed = true; window.clearTimeout(retryTimer); window.clearInterval(healthTimer); socket.off('room:update', update); socket.off('room:messages', messages); socket.off('room:removed', removed); socket.off('connect', onConnect); socket.off('disconnect', onDisconnect); socket.off('connect_error'); };
+    return () => { disposed = true; window.clearTimeout(retryTimer); window.clearInterval(healthTimer); socket.off('room:update', update); socket.off('room:messages', messages); socket.off('room:removed', removed); socket.off('connect', onConnect); socket.off('disconnect', onDisconnect); socket.off('connect_error', onConnectError); };
   }, []);
 
   const emit = async (event: string, payload: unknown = {}): Promise<{ ok: boolean; room?: ClientRoom; error?: string; errorCode?: string }> => {
@@ -436,6 +438,7 @@ export function CardRoom() {
   }, [room, identity.playerId, soundEnabled, vibrationEnabled]);
 
   const totalScore = useMemo(() => history.filter((item) => item.gameId !== 'poker' && item.gameId !== 'fishing').reduce((sum, item) => sum + item.score, 0), [history]);
+  const connectionLabel = connected ? '房间服务在线' : connectionTrouble ? '连接异常，重试中' : '正在连接';
   const recordOffline = (playedGame: GameId, score: number, recordKey?: string) => setHistory((items) => {
     const key = recordKey ?? `offline-${Date.now()}`;
     if (items.some((item) => item.key === key)) return items;
@@ -449,7 +452,7 @@ export function CardRoom() {
   if (offline) return <OfflineTable session={offline} localPlayerId={identity.playerId} soundEnabled={soundEnabled} onSound={(value) => { setSoundEnabled(value); localStorage.setItem('xy-sound', value ? 'on' : 'off'); }} onRecord={recordOffline} onExit={() => { setOffline(null); setSavedOffline(true); }} />;
 
   if (!room) return <main className="home-shell">
-    <header className="brand-bar"><div className="brand-lockup"><div className="brand-mark"><span>小</span></div><div><h1>小赌怡情</h1><p>FAMILY CARD ROOM</p></div></div><div className="brand-rule"><span><span className="connection-dot online" />牌友在线</span><i /><span>七种玩法</span></div><nav><button className="icon-label" onClick={() => setPanel('history')} title="查看我的战绩"><History size={18} />我的战绩</button><button className="icon-label" onClick={() => setPanel('rules')} title="查看完整规则"><CircleHelp size={18} />规则大全</button></nav></header>
+    <header className="brand-bar"><div className="brand-lockup"><div className="brand-mark"><span>小</span></div><div><h1>小赌怡情</h1><p>FAMILY CARD ROOM</p></div></div><div className="brand-rule"><span><span className={`connection-dot ${connected ? 'online' : ''}`} />{connectionLabel}</span><i /><span>七种玩法</span></div><nav><button className="icon-label" onClick={() => setPanel('history')} title="查看我的战绩"><History size={18} />我的战绩</button><button className="icon-label" onClick={() => setPanel('rules')} title="查看完整规则"><CircleHelp size={18} />规则大全</button></nav></header>
     <section className="clubhouse">
       <aside className="entry-panel">
         <div className="profile-heading"><span className="profile-avatar">{AVATARS[identity.avatar] ?? '友'}</span><div><small>牌桌名片</small><strong>{identity.name.trim() || '未命名牌友'}</strong></div></div>
@@ -462,7 +465,7 @@ export function CardRoom() {
         <div className="rail-divider"><span>加入牌局</span></div>
         <div className="join-box"><input className="text-input room-input" inputMode="numeric" maxLength={6} placeholder="000000" aria-label="六位房间号" value={joinCode} onChange={(e) => setJoinCode(e.target.value.replace(/\D/g, ''))} onKeyDown={(e) => e.key === 'Enter' && void joinRoom()} /><button className="secondary-button" disabled={busy} onClick={() => void joinRoom()}><DoorOpen size={18} />加入</button></div>
         {notice && <p className="notice">{notice}</p>}
-        <div className="rail-foot"><span><span className={`connection-dot ${connected ? 'online' : ''}`} />{connected ? '房间服务在线' : '正在连接'}</span><span>仅供娱乐</span></div>
+        <div className="rail-foot"><span role="status"><span className={`connection-dot ${connected ? 'online' : ''}`} />{connectionLabel}</span><span>仅供娱乐</span></div>
       </aside>
       <section className="game-browser">
         <div className="browser-heading"><div><span className="eyebrow">今晚开一桌</span><h2>选择玩法</h2></div><div className="game-count"><b>07</b><span>种玩法</span></div></div>
