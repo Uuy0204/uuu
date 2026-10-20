@@ -18,6 +18,7 @@ app.use(cors({ origin: corsOrigin }));
 app.get('/health', (_req, res) => res.json({ ok: true, name: '小赌怡情', rooms: rooms.size, durableRooms: durableRooms && storageStatus.healthy, storage: storageStatus, version: process.env.RENDER_GIT_COMMIT ?? process.env.APP_REVISION ?? 'local' }));
 app.get('/games', (_req, res) => res.json(gameNames));
 const publicDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../web/out');
+app.use('/_next/static', express.static(resolve(publicDir, '_next/static'), { maxAge: '1y', immutable: true }));
 app.use(express.static(publicDir));
 app.get('/{*path}', (_req, res) => res.sendFile(resolve(publicDir, 'index.html')));
 
